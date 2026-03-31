@@ -59,6 +59,8 @@ function writeNativeMessage(obj) {
 let tcpSocket = null;
 let tcpBuffer = Buffer.alloc(0);
 let reconnectTimer = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 60; // 30 seconds at 500ms intervals
 const TCP_PORT = getPort();
 
 function connectTcp() {
@@ -67,6 +69,7 @@ function connectTcp() {
   tcpSocket = new net.Socket();
 
   tcpSocket.connect(TCP_PORT, "127.0.0.1", () => {
+    reconnectAttempts = 0;
     if (reconnectTimer) {
       clearInterval(reconnectTimer);
       reconnectTimer = null;
@@ -97,9 +100,14 @@ function connectTcp() {
 
   tcpSocket.on("close", () => {
     tcpSocket = null;
-    // Retry connection every 500ms
     if (!reconnectTimer) {
       reconnectTimer = setInterval(() => {
+        reconnectAttempts++;
+        if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+          // MCP server is gone — exit cleanly so we don't linger as a zombie
+          clearInterval(reconnectTimer);
+          process.exit(0);
+        }
         if (!tcpSocket) connectTcp();
       }, 500);
     }

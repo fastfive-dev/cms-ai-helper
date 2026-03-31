@@ -49,6 +49,64 @@ function sendToExtension(tool, args) {
 }
 
 const TCP_PORT = getPort();
+
+// Write a pidfile so we can detect stale servers
+const pidfilePath = path.join(os.tmpdir(), `unblocked-chrome-mcp-${TCP_PORT}.pid`);
+
+async function killStaleServer() {
+  try {
+    const oldPid = parseInt(fs.readFileSync(pidfilePath, "utf-8").trim(), 10);
+    if (oldPid && oldPid !== process.pid) {
+      try {
+        process.kill(oldPid, 0); // Check if alive
+        process.kill(oldPid, "SIGTERM"); // Kill it
+        // Wait a moment for it to release the port
+        await new Promise((r) => setTimeout(r, 500));
+      } catch {
+        // Process already dead — fine
+      }
+    }
+  } catch {
+    // No pidfile — fine
+  }
+}
+
+function writePidfile() {
+  try {
+    fs.writeFileSync(pidfilePath, String(process.pid));
+  } catch {
+    // Non-fatal
+  }
+}
+
+function cleanupPidfile() {
+  try {
+    const content = fs.readFileSync(pidfilePath, "utf-8").trim();
+    if (content === String(process.pid)) fs.unlinkSync(pidfilePath);
+  } catch {
+    // Non-fatal
+  }
+}
+
+function shutdown() {
+  cleanupPidfile();
+  if (nativeHostSocket && !nativeHostSocket.destroyed) nativeHostSocket.destroy();
+  for (const [id, { reject, timer }] of pendingRequests) {
+    clearTimeout(timer);
+    reject(new Error("Server shutting down"));
+  }
+  pendingRequests.clear();
+  tcpServer.close();
+  process.exit(0);
+}
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+process.on("SIGHUP", shutdown);
+// When parent process (Claude Code) dies, stdin closes
+process.stdin.on("end", shutdown);
+process.stdin.resume(); // Ensure 'end' fires even though StdioServerTransport also reads
+
 const tcpServer = net.createServer((socket) => {
   // Only allow one native host connection at a time
   if (nativeHostSocket && !nativeHostSocket.destroyed) {
@@ -66,6 +124,7 @@ const tcpServer = net.createServer((socket) => {
       if (!line) continue;
       try {
         const msg = JSON.parse(line);
+        if (msg.type === "heartbeat") continue; // Ignore heartbeats
         if (msg.id && pendingRequests.has(msg.id)) {
           const { resolve, reject, timer } = pendingRequests.get(msg.id);
           clearTimeout(timer);
@@ -97,7 +156,22 @@ const tcpServer = net.createServer((socket) => {
   });
 });
 
-tcpServer.listen(TCP_PORT, "127.0.0.1");
+// Kill any stale server, then bind
+await killStaleServer();
+
+tcpServer.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    process.stderr.write(`Port ${TCP_PORT} still in use after killing stale server. Retrying...\n`);
+    setTimeout(() => {
+      tcpServer.close();
+      tcpServer.listen(TCP_PORT, "127.0.0.1");
+    }, 1000);
+  }
+});
+
+tcpServer.listen(TCP_PORT, "127.0.0.1", () => {
+  writePidfile();
+});
 
 // --- Helper to wrap tool results for MCP ---
 
