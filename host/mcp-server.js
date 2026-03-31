@@ -34,7 +34,7 @@ let requestIdCounter = 0;
 function sendToExtension(tool, args) {
   return new Promise((resolve, reject) => {
     if (!nativeHostSocket || nativeHostSocket.destroyed) {
-      reject(new Error("Browser extension is not connected. Make sure Chrome is running with the Unblocked Chrome extension installed and enabled."));
+      reject(new Error("Browser extension is not connected. Make sure a supported browser (Chrome, Brave, or Edge) is running with the Unblocked Chrome extension installed and enabled."));
       return;
     }
     const id = String(++requestIdCounter);
@@ -402,7 +402,7 @@ server.tool(
 // 16. switch_browser
 server.tool(
   "switch_browser",
-  "Switch which Chrome browser is used for browser automation. Call this when the user wants to connect to a different Chrome browser.",
+  "Switch which browser is used for browser automation. Supports Chrome, Brave, and Edge. Call this when the user wants to connect to a different browser.",
   {},
   async (args) => callTool("switch_browser", args)
 );

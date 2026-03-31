@@ -878,7 +878,7 @@ const toolHandlers = {
   },
 
   async switch_browser(args) {
-    return { content: [{ type: "text", text: "Browser switching is not supported in this extension." }] };
+    return { content: [{ type: "text", text: "Browser switching is not yet supported. The extension connects to whichever browser has it loaded (Chrome, Brave, or Edge). To switch, disable the extension in the current browser, enable it in the target browser, and restart both." }] };
   },
 
   async update_plan(args) {
