@@ -118,8 +118,28 @@ function formatTabContext(tabs) {
   };
 }
 
-function isInGroup(tabId) {
-  return tabGroupTabs.has(tabId);
+async function isInGroup(tabId) {
+  // Always check live state — in-memory tabGroupTabs can be stale after service worker restart
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.groupId !== -1) {
+      // Recover tabGroupId if we lost it (service worker restart)
+      if (tabGroupId === null) {
+        try {
+          const group = await chrome.tabGroups.get(tab.groupId);
+          if (group.title === "MCP") {
+            tabGroupId = group.id;
+            const groupTabs = await chrome.tabs.query({ groupId: tabGroupId });
+            tabGroupTabs = new Set(groupTabs.map((t) => t.id));
+          }
+        } catch {}
+      }
+      return tab.groupId === tabGroupId;
+    }
+    return tabGroupTabs.has(tabId);
+  } catch {
+    return false;
+  }
 }
 
 // --- CDP helpers ---
@@ -363,7 +383,7 @@ const toolHandlers = {
 
   async navigate(args) {
     const { url, tabId } = args;
-    if (!isInGroup(tabId)) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
+    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
 
     if (url === "back") {
       await chrome.tabs.goBack(tabId);
@@ -385,7 +405,8 @@ const toolHandlers = {
       await chrome.tabs.update(tabId, { url: targetUrl });
     }
 
-    // Wait for page load
+    // Wait for page load — short timeout to avoid service worker idle kill
+    // If the page takes longer, the caller can use screenshot/wait to check
     await new Promise((resolve) => {
       const listener = (updatedTabId, info) => {
         if (updatedTabId === tabId && info.status === "complete") {
@@ -394,16 +415,17 @@ const toolHandlers = {
         }
       };
       chrome.tabs.onUpdated.addListener(listener);
-      // Timeout after 30s
+      // 10s max — enough for most pages, avoids service worker timeout
       setTimeout(() => {
         chrome.tabs.onUpdated.removeListener(listener);
         resolve();
-      }, 30000);
+      }, 10000);
     });
 
     const tab = await chrome.tabs.get(tabId);
     const tabs = await chrome.tabs.query({ groupId: tabGroupId });
-    const text = `Successfully navigated to ${tab.url}.\n## Pages\n` +
+    const loading = tab.status !== "complete" ? " (still loading)" : "";
+    const text = `Navigated to ${tab.url}${loading}.\n## Pages\n` +
       tabs.map((t, i) => `${i + 1}: ${t.url}${t.id === tabId ? " [selected]" : ""}`).join("\n");
 
     return { content: [{ type: "text", text }] };
@@ -411,7 +433,7 @@ const toolHandlers = {
 
   async computer(args) {
     const { action, tabId } = args;
-    if (!isInGroup(tabId)) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
+    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
 
     let coordinate = args.coordinate;
     // Resolve ref to coordinates if provided
@@ -660,7 +682,7 @@ const toolHandlers = {
 
   async read_page(args) {
     const { tabId } = args;
-    if (!isInGroup(tabId)) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
+    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
 
     const resp = await sendContentMessage(tabId, {
       type: "generateAccessibilityTree",
@@ -677,7 +699,7 @@ const toolHandlers = {
 
   async get_page_text(args) {
     const { tabId } = args;
-    if (!isInGroup(tabId)) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
+    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
 
     const resp = await sendContentMessage(tabId, { type: "getPageText" });
     if (!resp?.result) return { content: [{ type: "text", text: "Error: Could not extract page text" }] };
@@ -699,7 +721,7 @@ const toolHandlers = {
 
   async find(args) {
     const { query, tabId } = args;
-    if (!isInGroup(tabId)) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
+    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
 
     const resp = await sendContentMessage(tabId, { type: "findElements", query });
     const results = resp?.result || [];
@@ -718,7 +740,7 @@ const toolHandlers = {
 
   async form_input(args) {
     const { ref, value, tabId } = args;
-    if (!isInGroup(tabId)) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
+    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
 
     const resp = await sendContentMessage(tabId, { type: "setFormValue", ref, value });
     const result = resp?.result;
@@ -729,7 +751,7 @@ const toolHandlers = {
 
   async javascript_tool(args) {
     const { text, tabId } = args;
-    if (!isInGroup(tabId)) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
+    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
 
     await ensureAttached(tabId);
     try {
@@ -757,7 +779,7 @@ const toolHandlers = {
 
   async read_console_messages(args) {
     const { tabId, pattern, limit = 100, onlyErrors, clear } = args;
-    if (!isInGroup(tabId)) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
+    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
 
     // Ensure console domain is enabled
     await ensureAttached(tabId);
@@ -799,7 +821,7 @@ const toolHandlers = {
 
   async read_network_requests(args) {
     const { tabId, urlPattern, limit = 100, clear } = args;
-    if (!isInGroup(tabId)) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
+    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
 
     // Ensure network domain is enabled
     await ensureAttached(tabId);
@@ -830,7 +852,7 @@ const toolHandlers = {
 
   async resize_window(args) {
     const { width, height, tabId } = args;
-    if (!isInGroup(tabId)) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
+    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
 
     const tab = await chrome.tabs.get(tabId);
     await chrome.windows.update(tab.windowId, { width, height });
@@ -839,7 +861,7 @@ const toolHandlers = {
 
   async upload_image(args) {
     const { imageId, tabId, ref, coordinate, filename = "image.png" } = args;
-    if (!isInGroup(tabId)) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
+    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
 
     const base64 = screenshotStore.get(imageId);
     if (!base64) {
@@ -922,4 +944,20 @@ async function handleToolRequest(id, tool, args) {
 }
 
 // --- Init ---
+
+// Recover MCP tab group state after service worker restart
+async function recoverTabGroupState() {
+  try {
+    const groups = await chrome.tabGroups.query({ title: "MCP" });
+    if (groups.length > 0) {
+      tabGroupId = groups[0].id;
+      const tabs = await chrome.tabs.query({ groupId: tabGroupId });
+      tabGroupTabs = new Set(tabs.map((t) => t.id));
+    }
+  } catch {
+    // Not critical — will be set on first tabs_context_mcp call
+  }
+}
+
+recoverTabGroupState();
 connectNativeHost();
