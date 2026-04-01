@@ -299,30 +299,40 @@ async function resolveRefToCoordinates(tabId, ref) {
 }
 
 // --- Screenshot helper ---
+// Cap viewport to 1280x800 for screenshots to keep size manageable.
+// Retina displays produce 2x+ resolution PNGs that blow up base64 size.
+const MAX_SCREENSHOT_WIDTH = 1280;
+const MAX_SCREENSHOT_HEIGHT = 800;
+
 async function takeScreenshot(tabId) {
   await ensureAttached(tabId);
+
+  // Always use JPEG — PNG on retina displays can be 5-10MB
   const result = await cdp(tabId, "Page.captureScreenshot", {
-    format: "png",
-    quality: 80,
+    format: "jpeg",
+    quality: 55,
+    optimizeForSpeed: true,
+    captureBeyondViewport: false,
+    clip: undefined, // viewport only
   });
   let base64 = result.data;
 
-  // Check size — native messaging limit is ~1MB, base64 PNG needs to fit
-  // If too large, reduce viewport and retry
-  if (base64.length > 800000) {
-    // Try with reduced quality JPEG
-    const jpgResult = await cdp(tabId, "Page.captureScreenshot", {
+  // If still too large (>500KB base64 ≈ ~375KB binary), reduce quality further
+  if (base64.length > 500000) {
+    const smaller = await cdp(tabId, "Page.captureScreenshot", {
       format: "jpeg",
-      quality: 50,
+      quality: 30,
+      optimizeForSpeed: true,
+      captureBeyondViewport: false,
     });
-    base64 = jpgResult.data;
+    base64 = smaller.data;
   }
 
   const imageId = `screenshot_${Date.now()}`;
   screenshotStore.set(imageId, base64);
-  // Keep only last 20 screenshots
+  // Keep only last 10 screenshots (less memory pressure)
   const keys = Array.from(screenshotStore.keys());
-  while (keys.length > 20) {
+  while (keys.length > 10) {
     screenshotStore.delete(keys.shift());
   }
 
@@ -451,7 +461,7 @@ const toolHandlers = {
         return {
           content: [
             { type: "text", text: `Screenshot taken. Image ID: ${imageId}` },
-            { type: "image", data: base64, mimeType: "image/png" },
+            { type: "image", data: base64, mimeType: "image/jpeg" },
           ],
         };
       }
@@ -464,7 +474,7 @@ const toolHandlers = {
         return {
           content: [
             { type: "text", text: `Clicked at (${coordinate[0]}, ${coordinate[1]})` },
-            { type: "image", data: base64, mimeType: "image/png" },
+            { type: "image", data: base64, mimeType: "image/jpeg" },
           ],
         };
       }
@@ -476,7 +486,7 @@ const toolHandlers = {
         return {
           content: [
             { type: "text", text: `Right-clicked at (${coordinate[0]}, ${coordinate[1]})` },
-            { type: "image", data: base64, mimeType: "image/png" },
+            { type: "image", data: base64, mimeType: "image/jpeg" },
           ],
         };
       }
@@ -488,7 +498,7 @@ const toolHandlers = {
         return {
           content: [
             { type: "text", text: `Double-clicked at (${coordinate[0]}, ${coordinate[1]})` },
-            { type: "image", data: base64, mimeType: "image/png" },
+            { type: "image", data: base64, mimeType: "image/jpeg" },
           ],
         };
       }
@@ -500,7 +510,7 @@ const toolHandlers = {
         return {
           content: [
             { type: "text", text: `Triple-clicked at (${coordinate[0]}, ${coordinate[1]})` },
-            { type: "image", data: base64, mimeType: "image/png" },
+            { type: "image", data: base64, mimeType: "image/jpeg" },
           ],
         };
       }
@@ -513,7 +523,7 @@ const toolHandlers = {
         return {
           content: [
             { type: "text", text: `Hovered at (${coordinate[0]}, ${coordinate[1]})` },
-            { type: "image", data: base64, mimeType: "image/png" },
+            { type: "image", data: base64, mimeType: "image/jpeg" },
           ],
         };
       }
@@ -531,7 +541,7 @@ const toolHandlers = {
         return {
           content: [
             { type: "text", text: `Typed "${args.text.substring(0, 50)}${args.text.length > 50 ? "..." : ""}"` },
-            { type: "image", data: base64, mimeType: "image/png" },
+            { type: "image", data: base64, mimeType: "image/jpeg" },
           ],
         };
       }
@@ -566,7 +576,7 @@ const toolHandlers = {
         return {
           content: [
             { type: "text", text: `Pressed key(s): ${args.text}` },
-            { type: "image", data: base64, mimeType: "image/png" },
+            { type: "image", data: base64, mimeType: "image/jpeg" },
           ],
         };
       }
@@ -590,7 +600,7 @@ const toolHandlers = {
         return {
           content: [
             { type: "text", text: `Scrolled ${dir} by ${amount} ticks at (${coordinate[0]}, ${coordinate[1]})` },
-            { type: "image", data: base64, mimeType: "image/png" },
+            { type: "image", data: base64, mimeType: "image/jpeg" },
           ],
         };
       }
@@ -614,7 +624,7 @@ const toolHandlers = {
         return {
           content: [
             { type: "text", text: `Scrolled to target` },
-            { type: "image", data: base64, mimeType: "image/png" },
+            { type: "image", data: base64, mimeType: "image/jpeg" },
           ],
         };
       }
@@ -626,7 +636,7 @@ const toolHandlers = {
         return {
           content: [
             { type: "text", text: `Waited ${duration} seconds` },
-            { type: "image", data: base64, mimeType: "image/png" },
+            { type: "image", data: base64, mimeType: "image/jpeg" },
           ],
         };
       }
@@ -655,7 +665,7 @@ const toolHandlers = {
         return {
           content: [
             { type: "text", text: `Dragged from (${sx}, ${sy}) to (${ex}, ${ey})` },
-            { type: "image", data: base64, mimeType: "image/png" },
+            { type: "image", data: base64, mimeType: "image/jpeg" },
           ],
         };
       }
