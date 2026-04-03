@@ -65,38 +65,28 @@ const TCP_PORT = getPort();
 const pidfilePath = path.join(os.tmpdir(), `open-claude-in-chrome-mcp-${TCP_PORT}.pid`);
 
 async function killStaleServer() {
-  // Strategy 1: kill the PID in the pidfile
-  try {
-    const oldPid = parseInt(fs.readFileSync(pidfilePath, "utf-8").trim(), 10);
-    if (oldPid && oldPid !== process.pid) {
-      try {
-        process.kill(oldPid, 0); // Check if alive
-        process.kill(oldPid, "SIGTERM"); // Kill it
-        await new Promise((r) => setTimeout(r, 500));
-      } catch {
-        // Process already dead
-      }
-    }
-  } catch {
-    // No pidfile
-  }
-
-  // Strategy 2: kill whatever is actually holding the port.
-  // This catches orphaned processes from old installs (different pidfile name, etc).
-  try {
-    const { execSync } = await import("node:child_process");
-    const lsof = execSync(`lsof -ti :${TCP_PORT}`, { encoding: "utf-8" }).trim();
-    if (lsof) {
-      for (const pidStr of lsof.split("\n")) {
-        const pid = parseInt(pidStr, 10);
-        if (pid && pid !== process.pid) {
-          try { process.kill(pid, "SIGTERM"); } catch {}
+  // Check both current and legacy pidfile names to catch orphans from renames
+  const pidfiles = [
+    pidfilePath,
+    path.join(os.tmpdir(), `unblocked-chrome-mcp-${TCP_PORT}.pid`),
+  ];
+  for (const pf of pidfiles) {
+    try {
+      const oldPid = parseInt(fs.readFileSync(pf, "utf-8").trim(), 10);
+      if (oldPid && oldPid !== process.pid) {
+        try {
+          process.kill(oldPid, 0); // Check if alive
+          process.kill(oldPid, "SIGTERM"); // Kill it
+          await new Promise((r) => setTimeout(r, 500));
+        } catch {
+          // Process already dead
         }
+        // Clean up the stale pidfile
+        try { fs.unlinkSync(pf); } catch {}
       }
-      await new Promise((r) => setTimeout(r, 500));
+    } catch {
+      // No pidfile
     }
-  } catch {
-    // lsof failed or no process on port — fine
   }
 }
 
