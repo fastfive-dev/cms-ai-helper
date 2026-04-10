@@ -230,6 +230,34 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 
 // ============================================================
+// --- Content Script Injection ---
+// ============================================================
+
+async function injectContentScriptAndRetry(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content.js'],
+    });
+
+    // 주입 후 약간의 대기 후 재시도
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        chrome.tabs.sendMessage(tabId, { type: 'extract_context' }, (response) => {
+          if (chrome.runtime.lastError || !response) {
+            reject(new Error('Content script injection failed'));
+            return;
+          }
+          resolve(response);
+        });
+      }, 100);
+    });
+  } catch {
+    throw new Error('Cannot inject content script');
+  }
+}
+
+// ============================================================
 // --- Message Handler ---
 // ============================================================
 
@@ -257,9 +285,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ error: 'No active tab' });
         return;
       }
-      chrome.tabs.sendMessage(tabs[0].id, { type: 'extract_context' }, (response) => {
+      const tabId = tabs[0].id;
+      chrome.tabs.sendMessage(tabId, { type: 'extract_context' }, (response) => {
         if (chrome.runtime.lastError) {
-          sendResponse({ error: 'Content script not available' });
+          // Content script가 없으면 프로그래밍 방식으로 주입 후 재시도
+          injectContentScriptAndRetry(tabId)
+            .then((result) => { sendResponse(result); })
+            .catch(() => { sendResponse({ error: 'Content script not available' }); });
           return;
         }
         sendResponse(response);
