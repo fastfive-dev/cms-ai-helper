@@ -263,6 +263,30 @@ body {
   margin: 3px 0;
 }
 
+.message.assistant .message-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 12px;
+}
+
+.message.assistant .message-content th,
+.message.assistant .message-content td {
+  border: 1px solid var(--border-standard);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.message.assistant .message-content th {
+  background: var(--surface-ground);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.message.assistant .message-content tbody tr:hover {
+  background: var(--primary-subtle);
+}
+
 .message.assistant .message-content a {
   color: var(--primary);
   text-decoration: none;

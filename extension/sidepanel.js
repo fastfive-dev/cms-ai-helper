@@ -265,6 +265,47 @@ function renderMarkdown(text) {
   // Inline code (`)
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
 
+  // Tables (| col | col | ... 형식)
+  html = html.replace(/((?:^\|.+\|$\n?)+)/gm, (tableBlock) => {
+    const rows = tableBlock.trim().split('\n').filter((row) => { return row.trim(); });
+    if (rows.length < 2) {
+      return tableBlock;
+    }
+
+    const parseRow = (row) => {
+      return row.split('|').slice(1, -1).map((cell) => { return cell.trim(); });
+    };
+
+    const isSeparator = /^\|[\s\-:]+\|$/.test(rows[1]);
+    let tableHtml = '<table>';
+
+    if (isSeparator && rows.length >= 3) {
+      const headers = parseRow(rows[0]);
+      tableHtml += '<thead><tr>';
+      headers.forEach((header) => { tableHtml += `<th>${header}</th>`; });
+      tableHtml += '</tr></thead><tbody>';
+      for (let i = 2; i < rows.length; i++) {
+        const cells = parseRow(rows[i]);
+        tableHtml += '<tr>';
+        cells.forEach((cell) => { tableHtml += `<td>${cell}</td>`; });
+        tableHtml += '</tr>';
+      }
+      tableHtml += '</tbody>';
+    } else {
+      tableHtml += '<tbody>';
+      rows.forEach((row) => {
+        const cells = parseRow(row);
+        tableHtml += '<tr>';
+        cells.forEach((cell) => { tableHtml += `<td>${cell}</td>`; });
+        tableHtml += '</tr>';
+      });
+      tableHtml += '</tbody>';
+    }
+
+    tableHtml += '</table>';
+    return tableHtml;
+  });
+
   // Bold (**)
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
@@ -287,8 +328,8 @@ function renderMarkdown(text) {
   html = html.replace(/\n/g, '<br>');
 
   // Clean up extra <br> around block elements
-  html = html.replace(/<br><(ul|ol|pre|li)/g, '<$1');
-  html = html.replace(/<\/(ul|ol|pre|li)><br>/g, '</$1>');
+  html = html.replace(/<br><(ul|ol|pre|li|table|thead|tbody|tr|th|td)/g, '<$1');
+  html = html.replace(/<\/(ul|ol|pre|li|table|thead|tbody|tr|th|td)><br>/g, '</$1>');
 
   return html;
 }
