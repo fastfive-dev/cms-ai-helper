@@ -1,0 +1,325 @@
+// Side panel chat logic for FastFive Admin Helper.
+
+const elements = {
+  messages: document.getElementById('messages'),
+  userInput: document.getElementById('userInput'),
+  sendBtn: document.getElementById('sendBtn'),
+  clearBtn: document.getElementById('clearBtn'),
+  contextToggle: document.getElementById('contextToggle'),
+  screenshotToggle: document.getElementById('screenshotToggle'),
+  contextBar: document.getElementById('contextBar'),
+  contextPath: document.getElementById('contextPath'),
+  contextDot: document.getElementById('contextDot'),
+  welcomeScreen: document.getElementById('welcomeScreen'),
+};
+
+let conversationHistory = [];
+let includeContext = true;
+let includeScreenshot = true;
+let isLoading = false;
+let currentPageContext = null;
+
+// ============================================================
+// --- Page Context ---
+// ============================================================
+
+async function fetchPageContext() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: 'get_page_context' }, (response) => {
+      if (chrome.runtime.lastError || !response || response.error) {
+        resolve(null);
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+async function updateContextBar() {
+  const context = await fetchPageContext();
+  currentPageContext = context;
+
+  if (context && context.path) {
+    elements.contextDot.classList.remove('disconnected');
+    elements.contextPath.textContent = context.path;
+    if (context.breadcrumbs && context.breadcrumbs.length > 0) {
+      elements.contextPath.textContent = context.breadcrumbs.join(' > ');
+    }
+  } else {
+    elements.contextDot.classList.add('disconnected');
+    elements.contextPath.textContent = 'Admin 페이지에 접속해주세요';
+  }
+}
+
+setInterval(updateContextBar, 3000);
+updateContextBar();
+
+// ============================================================
+// --- Welcome Screen ---
+// ============================================================
+
+function removeWelcomeScreen() {
+  if (elements.welcomeScreen) {
+    elements.welcomeScreen.remove();
+    elements.welcomeScreen = null;
+  }
+}
+
+// Hint chip click handlers
+document.querySelectorAll('.hint-chip').forEach((chip) => {
+  chip.addEventListener('click', () => {
+    const hint = chip.getAttribute('data-hint');
+    if (hint) {
+      elements.userInput.value = hint;
+      updateSendButton();
+      sendMessage();
+    }
+  });
+});
+
+// ============================================================
+// --- Chat ---
+// ============================================================
+
+function addMessage(role, content) {
+  removeWelcomeScreen();
+
+  const messageDiv = document.createElement('div');
+  messageDiv.className = `message ${role}`;
+
+  const contentDiv = document.createElement('div');
+  contentDiv.className = 'message-content';
+
+  if (role === 'assistant') {
+    contentDiv.innerHTML = renderMarkdown(content);
+  } else {
+    contentDiv.textContent = content;
+  }
+
+  messageDiv.appendChild(contentDiv);
+  elements.messages.appendChild(messageDiv);
+  scrollToBottom();
+}
+
+function addLoadingMessage() {
+  const messageDiv = document.createElement('div');
+  messageDiv.className = 'message assistant';
+  messageDiv.id = 'loadingMessage';
+
+  const contentDiv = document.createElement('div');
+  contentDiv.className = 'message-content';
+  contentDiv.innerHTML = '<div class="loading-dots"><span></span><span></span><span></span></div>';
+
+  messageDiv.appendChild(contentDiv);
+  elements.messages.appendChild(messageDiv);
+  scrollToBottom();
+}
+
+function removeLoadingMessage() {
+  const loadingMsg = document.getElementById('loadingMessage');
+  if (loadingMsg) {
+    loadingMsg.remove();
+  }
+}
+
+function scrollToBottom() {
+  elements.messages.scrollTop = elements.messages.scrollHeight;
+}
+
+async function sendMessage() {
+  const text = elements.userInput.value.trim();
+  if (!text || isLoading) {
+    return;
+  }
+
+  isLoading = true;
+  elements.sendBtn.disabled = true;
+  elements.userInput.value = '';
+  autoResize();
+
+  addMessage('user', text);
+  conversationHistory.push({ role: 'user', content: text });
+
+  addLoadingMessage();
+
+  let pageContext = null;
+  if (includeContext) {
+    pageContext = await fetchPageContext();
+  }
+
+  try {
+    const response = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(
+        {
+          type: 'chat',
+          payload: {
+            messages: conversationHistory,
+            pageContext,
+            includeScreenshot,
+          },
+        },
+        (result) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          if (result && result.error) {
+            reject(new Error(result.error));
+            return;
+          }
+          resolve(result);
+        }
+      );
+    });
+
+    removeLoadingMessage();
+
+    const assistantContent = response.content || response.text || '응답을 받을 수 없습니다.';
+    addMessage('assistant', assistantContent);
+    conversationHistory.push({ role: 'assistant', content: assistantContent });
+  } catch (error) {
+    removeLoadingMessage();
+
+    const errorContent = `오류가 발생했습니다: ${error.message}`;
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message assistant';
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'message-content error-text';
+    contentDiv.textContent = errorContent;
+    messageDiv.appendChild(contentDiv);
+    elements.messages.appendChild(messageDiv);
+    scrollToBottom();
+  } finally {
+    isLoading = false;
+    updateSendButton();
+  }
+}
+
+// ============================================================
+// --- Markdown Renderer ---
+// ============================================================
+
+function renderMarkdown(text) {
+  if (!text) {
+    return '';
+  }
+
+  let html = escapeHtml(text);
+
+  // Code blocks (```)
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
+    return `<pre><code>${code.trim()}</code></pre>`;
+  });
+
+  // Inline code (`)
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // Bold (**)
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+  // Italic (*)
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+  // Unordered lists (- item)
+  html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+
+  // Ordered lists (1. item)
+  html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+
+  // Headers
+  html = html.replace(/^### (.+)$/gm, '<strong>$1</strong>');
+  html = html.replace(/^## (.+)$/gm, '<strong>$1</strong>');
+  html = html.replace(/^# (.+)$/gm, '<strong>$1</strong>');
+
+  // Line breaks
+  html = html.replace(/\n/g, '<br>');
+
+  // Clean up extra <br> around block elements
+  html = html.replace(/<br><(ul|ol|pre|li)/g, '<$1');
+  html = html.replace(/<\/(ul|ol|pre|li)><br>/g, '</$1>');
+
+  return html;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// ============================================================
+// --- Event Handlers ---
+// ============================================================
+
+function autoResize() {
+  const textarea = elements.userInput;
+  textarea.style.height = 'auto';
+  textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+}
+
+function updateSendButton() {
+  elements.sendBtn.disabled = !elements.userInput.value.trim() || isLoading;
+}
+
+elements.userInput.addEventListener('input', () => {
+  autoResize();
+  updateSendButton();
+});
+
+elements.userInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    sendMessage();
+  }
+});
+
+elements.sendBtn.addEventListener('click', sendMessage);
+
+elements.clearBtn.addEventListener('click', () => {
+  conversationHistory = [];
+  elements.messages.innerHTML = '';
+  chrome.runtime.sendMessage({ type: 'reset_session' });
+
+  // Re-create welcome screen
+  const welcome = document.createElement('div');
+  welcome.className = 'welcome';
+  welcome.id = 'welcomeScreen';
+  welcome.innerHTML = `
+    <div class="welcome-icon">
+      <img src="icons/icon48.png" alt="">
+    </div>
+    <h2>Admin Helper</h2>
+    <p>현재 보고 있는 어드민 화면에 대해<br>궁금한 점을 물어보세요.</p>
+    <div class="welcome-hints">
+      <button class="hint-chip" data-hint="이 화면에서 뭘 할 수 있어?">이 화면에서 뭘 할 수 있어?</button>
+      <button class="hint-chip" data-hint="각 필드가 무슨 뜻이야?">각 필드가 무슨 뜻이야?</button>
+      <button class="hint-chip" data-hint="이 화면의 사용 순서를 알려줘">이 화면의 사용 순서를 알려줘</button>
+    </div>
+  `;
+  elements.messages.appendChild(welcome);
+  elements.welcomeScreen = welcome;
+
+  // Re-bind hint chips
+  welcome.querySelectorAll('.hint-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const hint = chip.getAttribute('data-hint');
+      if (hint) {
+        elements.userInput.value = hint;
+        updateSendButton();
+        sendMessage();
+      }
+    });
+  });
+});
+
+elements.contextToggle.addEventListener('click', () => {
+  includeContext = !includeContext;
+  elements.contextToggle.classList.toggle('active', includeContext);
+  elements.contextBar.style.display = includeContext ? 'flex' : 'none';
+});
+
+elements.screenshotToggle.addEventListener('click', () => {
+  includeScreenshot = !includeScreenshot;
+  elements.screenshotToggle.classList.toggle('active', includeScreenshot);
+});

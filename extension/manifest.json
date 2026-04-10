@@ -1,32 +1,59 @@
 {
   "manifest_version": 3,
-  "name": "Open Claude in Chrome",
+  "name": "FastFive Admin Helper",
   "version": "1.0.0",
-  "description": "Claude in Chrome, open source. No domain blocklist. Any Chromium browser.",
+  "description": "FastFive 어드민 사이트 AI 도우미. 현재 화면 컨텍스트를 기반으로 사용법을 안내합니다.",
   "minimum_chrome_version": "116",
   "permissions": [
-    "tabs",
-    "debugger",
     "activeTab",
-    "scripting",
-    "nativeMessaging",
-    "tabGroups",
-    "windows",
+    "sidePanel",
     "storage",
-    "alarms"
+    "identity",
+    "identity.email",
+    "tabs"
   ],
-  "host_permissions": [
-    "<all_urls>"
-  ],
+  "oauth2": {
+    "client_id": "YOUR_CLIENT_ID.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/userinfo.profile"
+    ]
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "https://admin.fastfive.co.kr/*",
+        "https://admin.dev.fastfive.co.kr/*",
+        "http://localhost/*"
+      ],
       "js": ["content.js"],
-      "run_at": "document_idle",
-      "all_frames": false
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_title": "FastFive Admin Helper"
+  },
+  "host_permissions": [
+    "https://admin.fastfive.co.kr/*",
+    "https://admin.dev.fastfive.co.kr/*",
+    "http://localhost/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["knowledge.md"],
+      "matches": ["<all_urls>"]
     }
   ],
   "icons": {

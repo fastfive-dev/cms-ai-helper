@@ -1,938 +1,527 @@
-// Background service worker for Open Claude in Chrome extension.
-// Handles: native messaging, CDP via chrome.debugger, tool dispatch, tab group management.
+// Background service worker for FastFive Admin Helper.
+// Handles: authentication, side panel management, chat proxy.
 
-// Prevent unhandled rejections from killing the service worker
 self.addEventListener("unhandledrejection", (event) => {
   event.preventDefault();
 });
 
-const NATIVE_HOST_NAME = "com.anthropic.open_claude_in_chrome";
+// ============================================================
+// --- Configuration ---
+// ============================================================
 
-// --- State ---
-let nativePort = null;
-let tabGroupId = null;
-let tabGroupTabs = new Set();
-const attachedTabs = new Map(); // tabId -> { enabledDomains: Set }
-const consoleMessages = new Map(); // tabId -> [{level, text, timestamp, url}]
-const networkRequests = new Map(); // tabId -> [{url, method, status, type, timestamp}]
-const screenshotStore = new Map(); // imageId -> base64
+const AUTH_CONFIG = {
+  // true: 로그인 없이 바로 사용 (개발/테스트용)
+  // false: Google 로그인 + 도메인 검증 필요 (프로덕션용)
+  skipAuth: true,
 
-// --- Keep-alive alarm ---
-chrome.alarms.create("keepalive", { periodInMinutes: 0.4 });
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "keepalive") {
-    if (!nativePort) connectNativeHost();
+  allowedDomains: ['fastfive.co.kr'],
+  storageKeys: {
+    authState: 'auth_state',
+    userInfo: 'auth_user_info',
+    tokenTimestamp: 'auth_token_timestamp',
+  },
+  userinfoEndpoint: 'https://www.googleapis.com/oauth2/v2/userinfo',
+};
+
+const API_CONFIG = {
+  baseUrl: 'http://localhost:4098',
+  // 세션 ID는 탭별로 관리
+  sessions: new Map(), // tabId -> sessionId
+};
+
+const ADMIN_URL_PATTERNS = [
+  'admin.fastfive.co.kr',
+  'admin.dev.fastfive.co.kr',
+  'localhost',
+];
+
+// ============================================================
+// --- Authentication ---
+// ============================================================
+
+let isAuthenticated = false;
+let currentUser = null;
+
+function isAllowedDomain(email) {
+  if (!email || typeof email !== 'string') {
+    return false;
   }
-});
-
-// --- Native messaging ---
-function connectNativeHost() {
-  if (nativePort) return;
-  try {
-    nativePort = chrome.runtime.connectNative(NATIVE_HOST_NAME);
-
-    nativePort.onMessage.addListener((msg) => {
-      if (msg.type === "tool_request" && msg.id) {
-        handleToolRequest(msg.id, msg.tool, msg.args || {});
-      }
-    });
-
-    nativePort.onDisconnect.addListener(() => {
-      const err = chrome.runtime.lastError;
-      nativePort = null;
-      // Retry in 2 seconds
-      setTimeout(connectNativeHost, 2000);
-    });
-  } catch (e) {
-    nativePort = null;
-    setTimeout(connectNativeHost, 2000);
+  const domain = email.split('@')[1];
+  if (!domain) {
+    return false;
   }
+  return AUTH_CONFIG.allowedDomains.includes(domain.toLowerCase());
 }
 
-function sendResponse(id, result) {
-  if (!nativePort) return;
-  try {
-    nativePort.postMessage({ id, type: "tool_response", result });
-  } catch {
-    // Port disconnected
+async function restoreAuthState() {
+  if (AUTH_CONFIG.skipAuth) {
+    isAuthenticated = true;
+    currentUser = { email: 'dev@fastfive.co.kr', name: 'Dev Mode' };
+    return true;
   }
-}
 
-function sendError(id, error) {
-  if (!nativePort) return;
   try {
-    nativePort.postMessage({ id, type: "tool_error", error: String(error) });
-  } catch {
-    // Port disconnected
-  }
-}
+    const data = await chrome.storage.local.get([
+      AUTH_CONFIG.storageKeys.authState,
+      AUTH_CONFIG.storageKeys.userInfo,
+    ]);
 
-// --- Tab group management ---
-async function ensureTabGroup(createIfEmpty) {
-  // Check if our tab group still exists
-  if (tabGroupId !== null) {
+    const authState = data[AUTH_CONFIG.storageKeys.authState];
+    const userInfo = data[AUTH_CONFIG.storageKeys.userInfo];
+
+    if (authState !== 'authenticated' || !userInfo || !userInfo.email) {
+      isAuthenticated = false;
+      currentUser = null;
+      return false;
+    }
+
+    if (!isAllowedDomain(userInfo.email)) {
+      await clearAuthState();
+      return false;
+    }
+
     try {
-      const group = await chrome.tabGroups.get(tabGroupId);
-      if (group) {
-        // Verify tabs are still in the group
-        const tabs = await chrome.tabs.query({ groupId: tabGroupId });
-        tabGroupTabs = new Set(tabs.map((t) => t.id));
-        if (tabGroupTabs.size > 0) return;
+      const token = await chrome.identity.getAuthToken({ interactive: false });
+      if (!token || !token.token) {
+        await clearAuthState();
+        return false;
       }
     } catch {
-      tabGroupId = null;
-      tabGroupTabs.clear();
+      await clearAuthState();
+      return false;
     }
+
+    isAuthenticated = true;
+    currentUser = userInfo;
+    return true;
+  } catch {
+    isAuthenticated = false;
+    currentUser = null;
+    return false;
   }
-
-  if (!createIfEmpty) return;
-
-  // Create a new window with a tab, group it
-  const win = await chrome.windows.create({ focused: true, url: "about:blank" });
-  const tab = win.tabs[0];
-  const groupId = await chrome.tabs.group({ tabIds: [tab.id] });
-  await chrome.tabGroups.update(groupId, { title: "MCP", color: "blue" });
-  tabGroupId = groupId;
-  tabGroupTabs = new Set([tab.id]);
 }
 
-function formatTabContext(tabs) {
-  const available = tabs.map((t) => ({
-    tabId: t.id,
-    title: t.title || "Untitled",
-    url: t.url || "",
-  }));
-
-  let text = `Tab Context:\n- Available tabs:\n`;
-  for (const t of available) {
-    text += `  \u2022 tabId ${t.tabId}: "${t.title}" (${t.url})\n`;
-  }
-
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify({ availableTabs: available, tabGroupId }) + "\n\n" + text,
-      },
-    ],
-  };
-}
-
-async function isInGroup(tabId) {
-  // Always check live state — in-memory tabGroupTabs can be stale after service worker restart
+async function performLogin() {
   try {
-    const tab = await chrome.tabs.get(tabId);
-    if (tab.groupId !== -1) {
-      // Recover tabGroupId if we lost it (service worker restart)
-      if (tabGroupId === null) {
-        try {
-          const group = await chrome.tabGroups.get(tab.groupId);
-          if (group.title === "MCP") {
-            tabGroupId = group.id;
-            const groupTabs = await chrome.tabs.query({ groupId: tabGroupId });
-            tabGroupTabs = new Set(groupTabs.map((t) => t.id));
-          }
-        } catch {}
-      }
-      return tab.groupId === tabGroupId;
+    const authResult = await chrome.identity.getAuthToken({ interactive: true });
+    if (!authResult || !authResult.token) {
+      return { success: false, error: '인증 토큰을 가져올 수 없습니다.' };
     }
-    return tabGroupTabs.has(tabId);
+    const token = authResult.token;
+
+    const response = await fetch(AUTH_CONFIG.userinfoEndpoint, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!response.ok) {
+      await revokeToken(token);
+      return { success: false, error: 'Google에서 사용자 정보를 가져올 수 없습니다.' };
+    }
+
+    const userInfo = await response.json();
+    const emailDomainOk = isAllowedDomain(userInfo.email);
+    const hdOk = userInfo.hd && AUTH_CONFIG.allowedDomains.includes(userInfo.hd.toLowerCase());
+
+    if (!emailDomainOk || !hdOk) {
+      await revokeToken(token);
+      return {
+        success: false,
+        error: `@${AUTH_CONFIG.allowedDomains.join(', @')} 계정만 사용할 수 있습니다. 현재 계정(${userInfo.email})은 권한이 없습니다.`,
+      };
+    }
+
+    const userData = {
+      email: userInfo.email,
+      name: userInfo.name,
+      picture: userInfo.picture,
+      hd: userInfo.hd,
+    };
+
+    await chrome.storage.local.set({
+      [AUTH_CONFIG.storageKeys.authState]: 'authenticated',
+      [AUTH_CONFIG.storageKeys.userInfo]: userData,
+      [AUTH_CONFIG.storageKeys.tokenTimestamp]: Date.now(),
+    });
+
+    isAuthenticated = true;
+    currentUser = userData;
+    return { success: true, user: userData };
+  } catch (error) {
+    return { success: false, error: error.message || '인증에 실패했습니다.' };
+  }
+}
+
+async function performLogout() {
+  try {
+    try {
+      const authResult = await chrome.identity.getAuthToken({ interactive: false });
+      if (authResult && authResult.token) {
+        await revokeToken(authResult.token);
+      }
+    } catch {
+      // Token may already be expired
+    }
+    await clearAuthState();
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+async function revokeToken(token) {
+  try {
+    await chrome.identity.removeCachedAuthToken({ token });
+    await fetch(`https://accounts.google.com/o/oauth2/revoke?token=${token}`);
+  } catch {
+    // Best effort
+  }
+}
+
+async function clearAuthState() {
+  isAuthenticated = false;
+  currentUser = null;
+  await chrome.storage.local.remove([
+    AUTH_CONFIG.storageKeys.authState,
+    AUTH_CONFIG.storageKeys.userInfo,
+    AUTH_CONFIG.storageKeys.tokenTimestamp,
+  ]);
+}
+
+function getAuthStatus() {
+  return { isAuthenticated, user: currentUser };
+}
+
+// ============================================================
+// --- Side Panel ---
+// ============================================================
+
+function isAdminUrl(url) {
+  try {
+    const hostname = new URL(url).hostname;
+    return ADMIN_URL_PATTERNS.some((pattern) => {
+      return hostname === pattern || hostname.endsWith('.' + pattern);
+    });
   } catch {
     return false;
   }
 }
 
-// --- CDP helpers ---
-async function ensureAttached(tabId) {
-  if (attachedTabs.has(tabId)) return;
-  await chrome.debugger.attach({ tabId }, "1.3");
-  attachedTabs.set(tabId, { enabledDomains: new Set() });
-  // Force devicePixelRatio to 1 so screenshots match CSS coordinate space.
-  // Without this, Retina displays produce 2x screenshots and all coordinates are wrong.
-  const tab = await chrome.tabs.get(tabId);
-  const win = await chrome.windows.get(tab.windowId);
-  await chrome.debugger.sendCommand({ tabId }, "Emulation.setDeviceMetricsOverride", {
-    width: win.width,
-    height: win.height,
-    deviceScaleFactor: 1,
-    mobile: false,
-  });
-}
-
-async function ensureDomain(tabId, domain) {
-  const state = attachedTabs.get(tabId);
-  if (!state) throw new Error("Not attached to tab");
-  if (state.enabledDomains.has(domain)) return;
-  await chrome.debugger.sendCommand({ tabId }, `${domain}.enable`, {});
-  state.enabledDomains.add(domain);
-}
-
-async function cdp(tabId, method, params = {}) {
-  await ensureAttached(tabId);
-  return chrome.debugger.sendCommand({ tabId }, method, params);
-}
-
-// Clean up when tab is closed
-chrome.tabs.onRemoved.addListener((tabId) => {
-  tabGroupTabs.delete(tabId);
-  if (attachedTabs.has(tabId)) {
-    try { chrome.debugger.detach({ tabId }); } catch {}
-    attachedTabs.delete(tabId);
-  }
-  consoleMessages.delete(tabId);
-  networkRequests.delete(tabId);
-});
-
-// Handle user dismissing debugger bar
-chrome.debugger.onDetach.addListener((source, reason) => {
-  attachedTabs.delete(source.tabId);
-});
-
-// --- CDP event listeners for console and network ---
-chrome.debugger.onEvent.addListener((source, method, params) => {
-  const tabId = source.tabId;
-
-  if (method === "Console.messageAdded" && params.message) {
-    const msgs = consoleMessages.get(tabId) || [];
-    msgs.push({
-      level: params.message.level,
-      text: params.message.text,
-      url: params.message.url || "",
-      timestamp: Date.now(),
-    });
-    // Keep last 1000
-    if (msgs.length > 1000) msgs.splice(0, msgs.length - 1000);
-    consoleMessages.set(tabId, msgs);
-  }
-
-  if (method === "Runtime.consoleAPICalled" && params.args) {
-    const msgs = consoleMessages.get(tabId) || [];
-    const text = params.args.map((a) => a.value ?? a.description ?? "").join(" ");
-    msgs.push({
-      level: params.type || "log",
-      text,
-      url: params.stackTrace?.callFrames?.[0]?.url || "",
-      timestamp: Date.now(),
-    });
-    if (msgs.length > 1000) msgs.splice(0, msgs.length - 1000);
-    consoleMessages.set(tabId, msgs);
-  }
-
-  if (method === "Network.responseReceived" && params.response) {
-    const reqs = networkRequests.get(tabId) || [];
-    reqs.push({
-      url: params.response.url,
-      method: params.response.requestHeaders ? "?" : "GET",
-      status: params.response.status,
-      statusText: params.response.statusText,
-      type: params.type || "Other",
-      mimeType: params.response.mimeType,
-      timestamp: Date.now(),
-    });
-    if (reqs.length > 1000) reqs.splice(0, reqs.length - 1000);
-    networkRequests.set(tabId, reqs);
-  }
-
-  if (method === "Network.requestWillBeSent" && params.request) {
-    const reqs = networkRequests.get(tabId) || [];
-    reqs.push({
-      url: params.request.url,
-      method: params.request.method,
-      status: 0,
-      type: params.type || "Other",
-      timestamp: Date.now(),
-    });
-    if (reqs.length > 1000) reqs.splice(0, reqs.length - 1000);
-    networkRequests.set(tabId, reqs);
-  }
-});
-
-// --- Key code mapping ---
-const KEY_MAP = {
-  enter: "Enter", return: "Enter", tab: "Tab", escape: "Escape", esc: "Escape",
-  backspace: "Backspace", delete: "Delete", space: "Space", " ": "Space",
-  arrowup: "ArrowUp", arrowdown: "ArrowDown", arrowleft: "ArrowLeft", arrowright: "ArrowRight",
-  up: "ArrowUp", down: "ArrowDown", left: "ArrowLeft", right: "ArrowRight",
-  home: "Home", end: "End", pageup: "PageUp", pagedown: "PageDown",
-  f1: "F1", f2: "F2", f3: "F3", f4: "F4", f5: "F5", f6: "F6",
-  f7: "F7", f8: "F8", f9: "F9", f10: "F10", f11: "F11", f12: "F12",
-};
-
-function parseKeyCombo(keyStr) {
-  const parts = keyStr.split("+").map((p) => p.trim().toLowerCase());
-  let modifiers = 0;
-  let key = "";
-  for (const part of parts) {
-    if (part === "ctrl" || part === "control") modifiers |= 2;
-    else if (part === "alt") modifiers |= 1;
-    else if (part === "shift") modifiers |= 8;
-    else if (part === "meta" || part === "cmd" || part === "command" || part === "win" || part === "windows") modifiers |= 4;
-    else key = KEY_MAP[part] || part;
-  }
-  return { key, modifiers };
-}
-
-function parseModifierString(modStr) {
-  if (!modStr) return 0;
-  let modifiers = 0;
-  const parts = modStr.split("+").map((p) => p.trim().toLowerCase());
-  for (const part of parts) {
-    if (part === "ctrl" || part === "control") modifiers |= 2;
-    else if (part === "alt") modifiers |= 1;
-    else if (part === "shift") modifiers |= 8;
-    else if (part === "meta" || part === "cmd" || part === "command" || part === "win" || part === "windows") modifiers |= 4;
-  }
-  return modifiers;
-}
-
-// --- Content script communication ---
-async function sendContentMessage(tabId, message) {
-  try {
-    const response = await chrome.tabs.sendMessage(tabId, message);
-    return response;
-  } catch {
-    // Content script might not be injected yet, try injecting
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ["content.js"],
-    });
-    // Retry
-    return chrome.tabs.sendMessage(tabId, message);
-  }
-}
-
-// --- Resolve ref to coordinates ---
-async function resolveRefToCoordinates(tabId, ref) {
-  const resp = await sendContentMessage(tabId, { type: "getRefCoordinates", ref });
-  if (resp?.result) return [resp.result.x, resp.result.y];
-  return null;
-}
-
-// --- Screenshot helper ---
-// Cap viewport to 1280x800 for screenshots to keep size manageable.
-// Retina displays produce 2x+ resolution PNGs that blow up base64 size.
-const MAX_SCREENSHOT_WIDTH = 1280;
-const MAX_SCREENSHOT_HEIGHT = 800;
-
-async function takeScreenshot(tabId) {
-  await ensureAttached(tabId);
-
-  // With deviceScaleFactor: 1 set in ensureAttached, screenshots are captured
-  // at CSS pixel dimensions (e.g., 1080x746), matching the coordinate space
-  // used by Input.dispatchMouseEvent. No scaling tricks needed.
-  const result = await cdp(tabId, "Page.captureScreenshot", {
-    format: "jpeg",
-    quality: 55,
-    optimizeForSpeed: true,
-    captureBeyondViewport: false,
-  });
-  let base64 = result.data;
-
-  // If still too large (>500KB base64 ≈ ~375KB binary), reduce quality further
-  if (base64.length > 500000) {
-    const smaller = await cdp(tabId, "Page.captureScreenshot", {
-      format: "jpeg",
-      quality: 30,
-      optimizeForSpeed: true,
-      captureBeyondViewport: false,
-    });
-    base64 = smaller.data;
-  }
-
-  const imageId = `screenshot_${Date.now()}`;
-  screenshotStore.set(imageId, base64);
-  // Keep only last 10 screenshots (less memory pressure)
-  const keys = Array.from(screenshotStore.keys());
-  while (keys.length > 10) {
-    screenshotStore.delete(keys.shift());
-  }
-
-  return { base64, imageId };
-}
-
-// --- Mouse helpers ---
-async function dispatchMouse(tabId, type, x, y, opts = {}) {
-  await cdp(tabId, "Input.dispatchMouseEvent", {
-    type,
-    x,
-    y,
-    button: opts.button || "left",
-    clickCount: opts.clickCount || 1,
-    modifiers: opts.modifiers || 0,
-  });
-}
-
-async function mouseClick(tabId, x, y, opts = {}) {
-  const button = opts.button || "left";
-  const clickCount = opts.clickCount || 1;
-  const modifiers = opts.modifiers || 0;
-
-  await dispatchMouse(tabId, "mouseMoved", x, y, { modifiers });
-  await sleep(50);
-  await dispatchMouse(tabId, "mousePressed", x, y, { button, clickCount, modifiers });
-  await sleep(50);
-  await dispatchMouse(tabId, "mouseReleased", x, y, { button, clickCount, modifiers });
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// --- Tool handlers ---
-const toolHandlers = {
-  async tabs_context_mcp(args) {
-    await ensureTabGroup(args.createIfEmpty);
-    if (tabGroupId === null) {
-      return {
-        content: [{ type: "text", text: "No MCP tab group exists. Use createIfEmpty: true to create one." }],
-      };
-    }
-    const tabs = await chrome.tabs.query({ groupId: tabGroupId });
-    return formatTabContext(tabs);
-  },
-
-  async tabs_create_mcp(args) {
-    await ensureTabGroup(true);
-    const tab = await chrome.tabs.create({ active: true });
-    await chrome.tabs.group({ tabIds: [tab.id], groupId: tabGroupId });
-    tabGroupTabs.add(tab.id);
-    const tabs = await chrome.tabs.query({ groupId: tabGroupId });
-    const result = formatTabContext(tabs);
-    result.content[0].text = `Created new tab. Tab ID: ${tab.id}\n\n` + result.content[0].text;
-    return result;
-  },
-
-  async navigate(args) {
-    const { url, tabId } = args;
-    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
-
-    if (url === "back") {
-      await chrome.tabs.goBack(tabId);
-    } else if (url === "forward") {
-      await chrome.tabs.goForward(tabId);
-    } else {
-      let targetUrl = url;
-      // Strip any malformed protocol prefix before normalizing
-      if (!targetUrl.match(/^https?:\/\//i) && !targetUrl.startsWith("about:") && !targetUrl.startsWith("chrome:") && !targetUrl.startsWith("brave:")) {
-        // Remove any partial/broken protocol prefix (e.g., "hps://", "http:/", "ht://")
-        targetUrl = targetUrl.replace(/^[a-z]{1,5}:\/+/i, "");
-        targetUrl = "https://" + targetUrl;
-      }
-      try {
-        new URL(targetUrl); // Validate URL before passing to Chrome
-      } catch {
-        return { content: [{ type: "text", text: `Invalid URL: "${url}". Could not parse as a valid URL.` }] };
-      }
-      await chrome.tabs.update(tabId, { url: targetUrl });
-    }
-
-    // Wait for page load — short timeout to avoid service worker idle kill
-    // If the page takes longer, the caller can use screenshot/wait to check
-    await new Promise((resolve) => {
-      const listener = (updatedTabId, info) => {
-        if (updatedTabId === tabId && info.status === "complete") {
-          chrome.tabs.onUpdated.removeListener(listener);
-          resolve();
-        }
-      };
-      chrome.tabs.onUpdated.addListener(listener);
-      // 10s max — enough for most pages, avoids service worker timeout
-      setTimeout(() => {
-        chrome.tabs.onUpdated.removeListener(listener);
-        resolve();
-      }, 10000);
-    });
-
-    const tab = await chrome.tabs.get(tabId);
-    const tabs = await chrome.tabs.query({ groupId: tabGroupId });
-    const loading = tab.status !== "complete" ? " (still loading)" : "";
-    const text = `Navigated to ${tab.url}${loading}.\n## Pages\n` +
-      tabs.map((t, i) => `${i + 1}: ${t.url}${t.id === tabId ? " [selected]" : ""}`).join("\n");
-
-    return { content: [{ type: "text", text }] };
-  },
-
-  async computer(args) {
-    const { action, tabId } = args;
-    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
-
-    let coordinate = args.coordinate;
-    // Resolve ref to coordinates if provided
-    if (args.ref && !coordinate) {
-      const coords = await resolveRefToCoordinates(tabId, args.ref);
-      if (!coords) return { content: [{ type: "text", text: `Could not resolve ref "${args.ref}" to coordinates.` }] };
-      coordinate = coords;
-    }
-
-    const modifiers = parseModifierString(args.modifiers);
-
-    switch (action) {
-      case "screenshot": {
-        const { base64, imageId } = await takeScreenshot(tabId);
-        // Get viewport dimensions for the response message
-        let dims = "";
-        try {
-          const vp = await cdp(tabId, "Runtime.evaluate", {
-            expression: "window.innerWidth + 'x' + window.innerHeight",
-          });
-          if (vp?.result?.value) dims = vp.result.value;
-        } catch {}
-        return {
-          content: [
-            { type: "text", text: `Successfully captured screenshot (${dims}, jpeg) - ID: ${imageId}` },
-            { type: "image", data: base64, mimeType: "image/jpeg" },
-          ],
-        };
-      }
-
-      case "left_click": {
-        if (!coordinate) return { content: [{ type: "text", text: "coordinate is required for left_click" }] };
-        await mouseClick(tabId, coordinate[0], coordinate[1], { modifiers });
-        return { content: [{ type: "text", text: `Clicked at (${coordinate[0]}, ${coordinate[1]})` }] };
-      }
-
-      case "right_click": {
-        if (!coordinate) return { content: [{ type: "text", text: "coordinate is required for right_click" }] };
-        await mouseClick(tabId, coordinate[0], coordinate[1], { button: "right", modifiers });
-        return { content: [{ type: "text", text: `Right-clicked at (${coordinate[0]}, ${coordinate[1]})` }] };
-      }
-
-      case "double_click": {
-        if (!coordinate) return { content: [{ type: "text", text: "coordinate is required for double_click" }] };
-        await mouseClick(tabId, coordinate[0], coordinate[1], { clickCount: 2, modifiers });
-        return { content: [{ type: "text", text: `Double-clicked at (${coordinate[0]}, ${coordinate[1]})` }] };
-      }
-
-      case "triple_click": {
-        if (!coordinate) return { content: [{ type: "text", text: "coordinate is required for triple_click" }] };
-        await mouseClick(tabId, coordinate[0], coordinate[1], { clickCount: 3, modifiers });
-        return { content: [{ type: "text", text: `Triple-clicked at (${coordinate[0]}, ${coordinate[1]})` }] };
-      }
-
-      case "hover": {
-        if (!coordinate) return { content: [{ type: "text", text: "coordinate is required for hover" }] };
-        await dispatchMouse(tabId, "mouseMoved", coordinate[0], coordinate[1], { modifiers });
-        await sleep(200);
-        return { content: [{ type: "text", text: `Hovered at (${coordinate[0]}, ${coordinate[1]})` }] };
-      }
-
-      case "type": {
-        if (!args.text) return { content: [{ type: "text", text: "text is required for type action" }] };
-        await ensureAttached(tabId);
-        // Type character by character for better compatibility
-        for (const char of args.text) {
-          await cdp(tabId, "Input.insertText", { text: char });
-          await sleep(10);
-        }
-        return { content: [{ type: "text", text: `Typed "${args.text.substring(0, 50)}${args.text.length > 50 ? "..." : ""}"` }] };
-      }
-
-      case "key": {
-        if (!args.text) return { content: [{ type: "text", text: "text is required for key action" }] };
-        await ensureAttached(tabId);
-        const repeat = Math.min(args.repeat || 1, 100);
-        // Parse space-separated key combos
-        const keys = args.text.split(" ").filter(Boolean);
-        for (let r = 0; r < repeat; r++) {
-          for (const keyStr of keys) {
-            const { key, modifiers: keyMod } = parseKeyCombo(keyStr);
-            const resolvedKey = key.length === 1 ? key : key;
-            await cdp(tabId, "Input.dispatchKeyEvent", {
-              type: "keyDown",
-              key: resolvedKey,
-              code: resolvedKey.length === 1 ? `Key${resolvedKey.toUpperCase()}` : resolvedKey,
-              modifiers: keyMod,
-              windowsVirtualKeyCode: resolvedKey.charCodeAt ? resolvedKey.charCodeAt(0) : 0,
-            });
-            await cdp(tabId, "Input.dispatchKeyEvent", {
-              type: "keyUp",
-              key: resolvedKey,
-              code: resolvedKey.length === 1 ? `Key${resolvedKey.toUpperCase()}` : resolvedKey,
-              modifiers: keyMod,
-            });
-            await sleep(30);
-          }
-        }
-        return { content: [{ type: "text", text: `Pressed ${repeat} key${repeat > 1 ? "s" : ""}: ${args.text}` }] };
-      }
-
-      case "scroll": {
-        if (!coordinate) return { content: [{ type: "text", text: "coordinate is required for scroll" }] };
-        const dir = args.scroll_direction || "down";
-        const amount = Math.min(args.scroll_amount || 3, 10);
-        const deltaX = dir === "left" ? -amount * 100 : dir === "right" ? amount * 100 : 0;
-        const deltaY = dir === "up" ? -amount * 100 : dir === "down" ? amount * 100 : 0;
-        await cdp(tabId, "Input.dispatchMouseEvent", {
-          type: "mouseWheel",
-          x: coordinate[0],
-          y: coordinate[1],
-          deltaX,
-          deltaY,
-          modifiers,
-        });
-        await sleep(300);
-        const { base64 } = await takeScreenshot(tabId);
-        return {
-          content: [
-            { type: "text", text: `Scrolled ${dir} by ${amount} ticks at (${coordinate[0]}, ${coordinate[1]})` },
-            { type: "image", data: base64, mimeType: "image/jpeg" },
-          ],
-        };
-      }
-
-      case "scroll_to": {
-        if (!coordinate && !args.ref) return { content: [{ type: "text", text: "coordinate or ref is required for scroll_to" }] };
-        if (args.ref) {
-          await sendContentMessage(tabId, {
-            type: "scrollToRef",
-            ref: args.ref,
-          });
-        }
-        // Scroll target element into view via JS
-        if (coordinate) {
-          await cdp(tabId, "Runtime.evaluate", {
-            expression: `window.scrollTo(${coordinate[0]}, ${coordinate[1]})`,
-          });
-        }
-        await sleep(300);
-        return { content: [{ type: "text", text: `Scrolled to target` }] };
-      }
-
-      case "wait": {
-        const duration = Math.min(args.duration || 1, 30);
-        await sleep(duration * 1000);
-        return { content: [{ type: "text", text: `Waited for ${duration} second${duration !== 1 ? "s" : ""}` }] };
-      }
-
-      case "left_click_drag": {
-        if (!args.start_coordinate || !coordinate) {
-          return { content: [{ type: "text", text: "start_coordinate and coordinate are required for left_click_drag" }] };
-        }
-        const [sx, sy] = args.start_coordinate;
-        const [ex, ey] = coordinate;
-        await dispatchMouse(tabId, "mouseMoved", sx, sy, { modifiers });
-        await sleep(50);
-        await dispatchMouse(tabId, "mousePressed", sx, sy, { button: "left", modifiers });
-        await sleep(50);
-        // Move in steps
-        const steps = 10;
-        for (let i = 1; i <= steps; i++) {
-          const mx = sx + ((ex - sx) * i) / steps;
-          const my = sy + ((ey - sy) * i) / steps;
-          await dispatchMouse(tabId, "mouseMoved", mx, my, { modifiers });
-          await sleep(20);
-        }
-        await dispatchMouse(tabId, "mouseReleased", ex, ey, { button: "left", modifiers });
-        return { content: [{ type: "text", text: `Dragged from (${sx}, ${sy}) to (${ex}, ${ey})` }] };
-      }
-
-      case "zoom": {
-        if (!args.region || args.region.length !== 4) {
-          return { content: [{ type: "text", text: "region [x0, y0, x1, y1] is required for zoom" }] };
-        }
-        // Capture full screenshot then crop region
-        const { base64: fullBase64 } = await takeScreenshot(tabId);
-        // Return the full screenshot with region info — client can crop
-        return {
-          content: [
-            { type: "text", text: `Zoom region: [${args.region.join(", ")}]` },
-            { type: "image", data: fullBase64, mimeType: "image/png" },
-          ],
-        };
-      }
-
-      default:
-        return { content: [{ type: "text", text: `Unknown computer action: ${action}` }] };
-    }
-  },
-
-  async read_page(args) {
-    const { tabId } = args;
-    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
-
-    const resp = await sendContentMessage(tabId, {
-      type: "generateAccessibilityTree",
-      options: {
-        filter: args.filter,
-        depth: args.depth,
-        max_chars: args.max_chars,
-        ref_id: args.ref_id,
-      },
-    });
-
-    let tree = resp?.result || "Error: Could not generate accessibility tree";
-    // Append viewport dimensions so Claude knows the coordinate space
-    try {
-      await ensureAttached(tabId);
-      const vp = await cdp(tabId, "Runtime.evaluate", {
-        expression: "window.innerWidth + 'x' + window.innerHeight",
-      });
-      if (vp?.result?.value) tree += `\n\nViewport: ${vp.result.value}`;
-    } catch {}
-    return { content: [{ type: "text", text: tree }] };
-  },
-
-  async get_page_text(args) {
-    const { tabId } = args;
-    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
-
-    const resp = await sendContentMessage(tabId, { type: "getPageText" });
-    if (!resp?.result) return { content: [{ type: "text", text: "Error: Could not extract page text" }] };
-
-    try {
-      const data = JSON.parse(resp.result);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Title: ${data.title}\nURL: ${data.url}\nSource: <${data.sourceTag}>\n\n${data.text}`,
-          },
-        ],
-      };
-    } catch {
-      return { content: [{ type: "text", text: resp.result }] };
-    }
-  },
-
-  async find(args) {
-    const { query, tabId } = args;
-    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
-
-    const resp = await sendContentMessage(tabId, { type: "findElements", query });
-    const results = resp?.result || [];
-
-    if (results.length === 0) {
-      return { content: [{ type: "text", text: `No elements found matching "${query}"` }] };
-    }
-
-    let text = `Found ${results.length} element(s) matching "${query}":\n\n`;
-    for (const r of results) {
-      text += `[${r.ref}] ${r.role} "${r.name}" at (${r.coordinates[0]}, ${r.coordinates[1]})\n`;
-    }
-
-    return { content: [{ type: "text", text }] };
-  },
-
-  async form_input(args) {
-    const { ref, value, tabId } = args;
-    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
-
-    const resp = await sendContentMessage(tabId, { type: "setFormValue", ref, value });
-    const result = resp?.result;
-
-    if (result?.error) return { content: [{ type: "text", text: `Error: ${result.error}` }] };
-    return { content: [{ type: "text", text: `Set ${ref} to "${value}". Result: ${JSON.stringify(result)}` }] };
-  },
-
-  async javascript_tool(args) {
-    const { text, tabId } = args;
-    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
-
-    await ensureAttached(tabId);
-    try {
-      const result = await cdp(tabId, "Runtime.evaluate", {
-        expression: text,
-        returnByValue: true,
-        awaitPromise: true,
-      });
-
-      if (result.exceptionDetails) {
-        return {
-          content: [{ type: "text", text: `Error: ${result.exceptionDetails.text || JSON.stringify(result.exceptionDetails)}` }],
-        };
-      }
-
-      const val = result.result;
-      if (val.type === "undefined") return { content: [{ type: "text", text: "undefined" }] };
-      return {
-        content: [{ type: "text", text: val.value !== undefined ? JSON.stringify(val.value) : val.description || String(val) }],
-      };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${e.message}` }] };
-    }
-  },
-
-  async read_console_messages(args) {
-    const { tabId, pattern, limit = 100, onlyErrors, clear } = args;
-    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
-
-    // Ensure console domain is enabled
-    await ensureAttached(tabId);
-    await ensureDomain(tabId, "Console");
-    await ensureDomain(tabId, "Runtime");
-
-    let msgs = consoleMessages.get(tabId) || [];
-
-    if (onlyErrors) {
-      msgs = msgs.filter((m) => ["error", "exception"].includes(m.level));
-    }
-
-    if (pattern) {
-      try {
-        const re = new RegExp(pattern, "i");
-        msgs = msgs.filter((m) => re.test(m.text) || re.test(m.level));
-      } catch {
-        // Invalid regex, use as substring
-        msgs = msgs.filter((m) => m.text.includes(pattern));
-      }
-    }
-
-    msgs = msgs.slice(-limit);
-
-    if (clear) {
-      consoleMessages.set(tabId, []);
-    }
-
-    if (msgs.length === 0) {
-      return { content: [{ type: "text", text: "No console messages matching the pattern." }] };
-    }
-
-    const text = msgs
-      .map((m) => `[${m.level}] ${m.text}${m.url ? ` (${m.url})` : ""}`)
-      .join("\n");
-
-    return { content: [{ type: "text", text: `Console messages (${msgs.length}):\n${text}` }] };
-  },
-
-  async read_network_requests(args) {
-    const { tabId, urlPattern, limit = 100, clear } = args;
-    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
-
-    // Ensure network domain is enabled
-    await ensureAttached(tabId);
-    await ensureDomain(tabId, "Network");
-
-    let reqs = networkRequests.get(tabId) || [];
-
-    if (urlPattern) {
-      reqs = reqs.filter((r) => r.url.includes(urlPattern));
-    }
-
-    reqs = reqs.slice(-limit);
-
-    if (clear) {
-      networkRequests.set(tabId, []);
-    }
-
-    if (reqs.length === 0) {
-      return { content: [{ type: "text", text: "No network requests matching the pattern." }] };
-    }
-
-    const text = reqs
-      .map((r) => `${r.method} ${r.url} ${r.status ? `→ ${r.status}` : "(pending)"}${r.mimeType ? ` [${r.mimeType}]` : ""}`)
-      .join("\n");
-
-    return { content: [{ type: "text", text: `Network requests (${reqs.length}):\n${text}` }] };
-  },
-
-  async resize_window(args) {
-    const { width, height, tabId } = args;
-    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
-
-    const tab = await chrome.tabs.get(tabId);
-    await chrome.windows.update(tab.windowId, { width, height });
-    return { content: [{ type: "text", text: `Resized window to ${width}x${height}` }] };
-  },
-
-  async upload_image(args) {
-    const { imageId, tabId, ref, coordinate, filename = "image.png" } = args;
-    if (!(await isInGroup(tabId))) return { content: [{ type: "text", text: `Tab ${tabId} is not in the MCP group.` }] };
-
-    const base64 = screenshotStore.get(imageId);
-    if (!base64) {
-      return { content: [{ type: "text", text: `Image ${imageId} not found. Take a screenshot first.` }] };
-    }
-
-    // Use CDP to set file input
-    if (ref) {
-      // Find the element and set its files via CDP
-      await ensureAttached(tabId);
-      const result = await cdp(tabId, "Runtime.evaluate", {
-        expression: `(() => {
-          const el = window.__unblockedChrome?.resolveRef?.("${ref}");
-          if (!el) return null;
-          return el.tagName.toLowerCase();
-        })()`,
-        returnByValue: true,
-      });
-
-      if (result.result?.value === "input") {
-        // For file inputs, we need DOM.setFileInputFiles via CDP
-        // First get the node
-        const doc = await cdp(tabId, "DOM.getDocument", {});
-        const nodeResult = await cdp(tabId, "Runtime.evaluate", {
-          expression: `(() => {
-            const el = window.__unblockedChrome?.resolveRef?.("${ref}");
-            if (el) el.scrollIntoView();
-            return true;
-          })()`,
-          returnByValue: true,
-        });
-        return { content: [{ type: "text", text: `Upload via file input requires a temporary file. Use the file input directly.` }] };
-      }
-    }
-
-    return { content: [{ type: "text", text: `Image upload for ref=${ref}, coordinate=${coordinate} — use drag & drop or file input.` }] };
-  },
-
-  async gif_creator(args) {
-    return { content: [{ type: "text", text: "GIF recording is not yet implemented in this extension." }] };
-  },
-
-  async shortcuts_list(args) {
-    return { content: [{ type: "text", text: "No shortcuts available. Shortcuts are not supported in this extension." }] };
-  },
-
-  async shortcuts_execute(args) {
-    return { content: [{ type: "text", text: "Shortcuts are not supported in this extension." }] };
-  },
-
-  async switch_browser(args) {
-    return { content: [{ type: "text", text: "Browser switching is not yet supported. The extension connects to whichever browser has it loaded (Chrome, Brave, or Edge). To switch, disable the extension in the current browser, enable it in the target browser, and restart both." }] };
-  },
-
-  async update_plan(args) {
-    const { domains, approach } = args;
-    let text = `Plan:\n\nDomains: ${domains.join(", ")}\n\nApproach:\n`;
-    for (const step of approach) {
-      text += `- ${step}\n`;
-    }
-    text += "\nPlan auto-approved (no permission restrictions in this extension).";
-    return { content: [{ type: "text", text }] };
-  },
-};
-
-// --- Tool dispatch ---
-async function handleToolRequest(id, tool, args) {
-  const handler = toolHandlers[tool];
-  if (!handler) {
-    sendError(id, `Unknown tool: ${tool}`);
+// admin 탭에서만 사이드 패널 활성화
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (changeInfo.status !== 'complete' || !tab.url) {
     return;
   }
 
+  if (isAdminUrl(tab.url)) {
+    await chrome.sidePanel.setOptions({
+      tabId,
+      path: 'sidepanel.html',
+      enabled: true,
+    });
+  } else {
+    await chrome.sidePanel.setOptions({
+      tabId,
+      enabled: false,
+    });
+  }
+});
+
+// 아이콘 클릭 시 사이드 패널 열기
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+
+// ============================================================
+// --- Message Handler ---
+// ============================================================
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Auth messages (from popup)
+  if (message.type === 'auth_status') {
+    sendResponse(getAuthStatus());
+    return false;
+  }
+
+  if (message.type === 'auth_login') {
+    performLogin().then((result) => { sendResponse(result); });
+    return true;
+  }
+
+  if (message.type === 'auth_logout') {
+    performLogout().then((result) => { sendResponse(result); });
+    return true;
+  }
+
+  // Page context request (from side panel)
+  if (message.type === 'get_page_context') {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (!tabs[0]) {
+        sendResponse({ error: 'No active tab' });
+        return;
+      }
+      chrome.tabs.sendMessage(tabs[0].id, { type: 'extract_context' }, (response) => {
+        if (chrome.runtime.lastError) {
+          sendResponse({ error: 'Content script not available' });
+          return;
+        }
+        sendResponse(response);
+      });
+    });
+    return true;
+  }
+
+  // 세션 리셋 (대화 초기화)
+  if (message.type === 'reset_session') {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tabId = tabs[0]?.id || 'default';
+      API_CONFIG.sessions.delete(tabId);
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
+  // Chat request (from side panel)
+  if (message.type === 'chat') {
+    if (!isAuthenticated) {
+      sendResponse({ error: '로그인이 필요합니다.' });
+      return false;
+    }
+
+    handleChatRequest(message.payload, sender)
+      .then((result) => { sendResponse(result); })
+      .catch((error) => { sendResponse({ error: error.message }); });
+    return true;
+  }
+
+  return false;
+});
+
+const SYSTEM_CONTEXT = `당신은 FastFive 어드민 사이트 사용 도우미입니다.
+사용자가 현재 보고 있는 어드민 화면 정보가 함께 제공됩니다.
+화면 정보를 참고하여 해당 화면의 사용 방법을 친절하고 구체적으로 안내해주세요.
+
+## FastFive Admin 주요 기능
+- 출입 관리: 카드 발급/회수, RF 카드, 출입 레벨 그룹, 방문자 이력
+- 공간 관리: 지점 관리, 라운지 예약, 공간 계약
+- 예약 관리: 공간 예약, 사용 이력, 승인 대기, 개별 결제
+- 계약 관리: 멤버십, 갱신, 부가 서비스, 자동 연장
+- 커뮤니케이션: 메시지 발송, 알림, 공지사항, FAQ, 팝업
+- 사용자 관리: 멤버 그룹(입주사), 멤버 관리
+- 멤버서비스: 혜택, 커뮤니티 이벤트, 파트너십, 크레딧 프로모션
+- 회계 (SystemAdmin 전용): 청구, 결제, 입금, 정산
+- 커뮤니티: 피드 규칙, 신고 처리
+
+## 응답 규칙
+- 사용자가 보고 있는 화면 기준으로 답변하세요
+- 단계별 안내 시 번호를 매겨주세요
+- 관련 메뉴가 있으면 함께 안내하세요
+- 한국어로 답변하세요`;
+
+async function getOrCreateSession() {
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tabId = tabs[0]?.id || 'default';
+
+  if (API_CONFIG.sessions.has(tabId)) {
+    return API_CONFIG.sessions.get(tabId);
+  }
+
+  const response = await fetch(`${API_CONFIG.baseUrl}/session`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    throw new Error(`세션 생성 실패: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const sessionId = data.sessionId || data.id || data.session_id;
+
+  if (!sessionId) {
+    throw new Error('세션 ID를 받지 못했습니다.');
+  }
+
+  // 세션 생성 후 시스템 컨텍스트를 첫 메시지로 전송
+  let systemText = SYSTEM_CONTEXT;
+
+  const knowledge = await loadKnowledge();
+  if (knowledge) {
+    systemText += '\n\n## 상세 사용 가이드\n' + knowledge;
+  }
+
+  await fetch(`${API_CONFIG.baseUrl}/session/${sessionId}/message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      parts: [{ type: 'text', text: systemText }],
+    }),
+  });
+
+  API_CONFIG.sessions.set(tabId, sessionId);
+  return sessionId;
+}
+
+function buildMessageText(userMessage, pageContext) {
+  let text = userMessage;
+
+  if (pageContext) {
+    const parts = ['\n\n---\n[현재 Admin 화면 정보]'];
+    if (pageContext.path) {
+      parts.push(`경로: ${pageContext.path}`);
+    }
+    if (pageContext.breadcrumbs && pageContext.breadcrumbs.length > 0) {
+      parts.push(`메뉴: ${pageContext.breadcrumbs.join(' > ')}`);
+    }
+    if (pageContext.pageContent) {
+      const content = pageContext.pageContent;
+      if (content.headers && content.headers.length > 0) {
+        parts.push(`페이지 제목: ${content.headers.join(', ')}`);
+      }
+      if (content.tableColumns && content.tableColumns.length > 0) {
+        parts.push(`테이블 컬럼: ${content.tableColumns.join(', ')}`);
+      }
+      if (content.formFields && content.formFields.length > 0) {
+        parts.push(`폼 필드: ${content.formFields.join(', ')}`);
+      }
+      if (content.tabs && content.tabs.length > 0) {
+        parts.push(`탭: ${content.tabs.join(', ')}`);
+      }
+      if (content.actions && content.actions.length > 0) {
+        parts.push(`버튼: ${content.actions.join(', ')}`);
+      }
+    }
+    if (pageContext.errors && pageContext.errors.length > 0) {
+      parts.push(`에러: ${pageContext.errors.join('; ')}`);
+    }
+    text += parts.join('\n');
+  }
+
+  return text;
+}
+
+async function captureScreenshot() {
   try {
-    const result = await handler(args);
-    sendResponse(id, result);
-  } catch (err) {
-    sendError(id, `${tool} failed: ${err.message}`);
+    const dataUrl = await chrome.tabs.captureVisibleTab(null, {
+      format: 'jpeg',
+      quality: 70,
+    });
+    // data:image/jpeg;base64,... → base64 부분만 추출
+    const base64 = dataUrl.split(',')[1];
+    return base64;
+  } catch {
+    return null;
   }
 }
 
-// --- Init ---
-
-// Recover MCP tab group state after service worker restart
-async function recoverTabGroupState() {
+async function loadKnowledge() {
   try {
-    const groups = await chrome.tabGroups.query({ title: "MCP" });
-    if (groups.length > 0) {
-      tabGroupId = groups[0].id;
-      const tabs = await chrome.tabs.query({ groupId: tabGroupId });
-      tabGroupTabs = new Set(tabs.map((t) => t.id));
+    const url = chrome.runtime.getURL('knowledge.md');
+    const response = await fetch(url);
+    if (response.ok) {
+      return await response.text();
     }
   } catch {
-    // Not critical — will be set on first tabs_context_mcp call
+    // knowledge.md가 없어도 동작
   }
+  return null;
 }
 
-recoverTabGroupState();
-connectNativeHost();
+async function handleChatRequest(payload) {
+  const { messages, pageContext, includeScreenshot } = payload;
+
+  const sessionId = await getOrCreateSession();
+
+  const lastMessage = messages[messages.length - 1];
+  const text = buildMessageText(lastMessage.content, pageContext);
+
+  // 메시지 parts 구성: 텍스트 + (선택) 스크린샷
+  const parts = [{ type: 'text', text }];
+
+  if (includeScreenshot) {
+    const screenshot = await captureScreenshot();
+    if (screenshot) {
+      parts.push({
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: 'image/jpeg',
+          data: screenshot,
+        },
+      });
+    }
+  }
+
+  const response = await fetch(`${API_CONFIG.baseUrl}/session/${sessionId}/message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parts }),
+  });
+
+  if (!response.ok) {
+    // 세션 만료 시 재생성 시도
+    if (response.status === 404) {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tabId = tabs[0]?.id || 'default';
+      API_CONFIG.sessions.delete(tabId);
+
+      const newSessionId = await getOrCreateSession();
+      const retryResponse = await fetch(`${API_CONFIG.baseUrl}/session/${newSessionId}/message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parts: [{ type: 'text', text }],
+        }),
+      });
+
+      if (!retryResponse.ok) {
+        throw new Error(`서버 오류: ${retryResponse.status}`);
+      }
+
+      const retryData = await retryResponse.json();
+      return { content: extractResponseText(retryData) };
+    }
+
+    throw new Error(`서버 오류: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return { content: extractResponseText(data) };
+}
+
+function extractResponseText(data) {
+  // 응답 형식에 따라 텍스트 추출
+  if (typeof data === 'string') {
+    return data;
+  }
+  if (data.text) {
+    return data.text;
+  }
+  if (data.content) {
+    if (typeof data.content === 'string') {
+      return data.content;
+    }
+    if (Array.isArray(data.content)) {
+      return data.content
+        .filter((block) => { return block.type === 'text'; })
+        .map((block) => { return block.text; })
+        .join('\n');
+    }
+  }
+  if (data.parts) {
+    return data.parts
+      .filter((part) => { return part.type === 'text'; })
+      .map((part) => { return part.text; })
+      .join('\n');
+  }
+  if (data.message) {
+    return data.message;
+  }
+  return JSON.stringify(data);
+}
+
+// ============================================================
+// --- Init ---
+// ============================================================
+
+async function initialize() {
+  await restoreAuthState();
+}
+
+initialize();
