@@ -32,6 +32,7 @@ const API_CONFIG = {
 const ADMIN_URL_PATTERNS = [
   'admin.fastfive.co.kr',
   'admin.dev.fastfive.co.kr',
+  'cms-dev.slowfive.com',
   'localhost',
 ];
 

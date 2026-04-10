@@ -31,6 +31,7 @@
       "matches": [
         "https://admin.fastfive.co.kr/*",
         "https://admin.dev.fastfive.co.kr/*",
+        "https://cms-dev.slowfive.com/*",
         "http://localhost/*"
       ],
       "js": ["content.js"],
@@ -49,6 +50,7 @@
   "host_permissions": [
     "https://admin.fastfive.co.kr/*",
     "https://admin.dev.fastfive.co.kr/*",
+    "https://cms-dev.slowfive.com/*",
     "http://localhost/*"
   ],
   "web_accessible_resources": [
