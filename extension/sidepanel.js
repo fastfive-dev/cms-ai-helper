@@ -24,28 +24,79 @@ let currentPageContext = null;
 // ============================================================
 
 async function fetchPageContext() {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: 'get_page_context' }, (response) => {
-      if (chrome.runtime.lastError || !response || response.error) {
-        resolve(null);
-        return;
+  try {
+    // 사이드 패널에서 직접 탭 조회 (background 경유 X → 더 안정적)
+    const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    const tab = tabs[0];
+    if (!tab || !tab.id) {
+      return null;
+    }
+
+    // 1차: content script에 직접 메시지
+    try {
+      const context = await chrome.tabs.sendMessage(tab.id, { type: 'extract_context' });
+      if (context && context.url) {
+        return context;
       }
-      resolve(response);
-    });
-  });
+    } catch {
+      // content script 아직 로드 안 됨
+    }
+
+    // 2차: content script 주입 후 재시도
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['content.js'],
+      });
+      await new Promise((resolve) => { setTimeout(resolve, 200); });
+      const context = await chrome.tabs.sendMessage(tab.id, { type: 'extract_context' });
+      if (context && context.url) {
+        return context;
+      }
+    } catch {
+      // 주입 실패 (권한 없는 페이지 등)
+    }
+
+    // 3차: 최소한 탭 URL 정보라도 반환
+    if (tab.url) {
+      try {
+        const url = new URL(tab.url);
+        return {
+          url: tab.url,
+          path: url.pathname,
+          title: tab.title || '',
+          breadcrumbs: null,
+          activeMenu: null,
+          pageContent: {},
+          errors: null,
+        };
+      } catch {
+        return null;
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 async function updateContextBar() {
-  const context = await fetchPageContext();
-  currentPageContext = context;
+  try {
+    const context = await fetchPageContext();
+    currentPageContext = context;
 
-  if (context && context.path) {
-    elements.contextDot.classList.remove('disconnected');
-    elements.contextPath.textContent = context.path;
-    if (context.breadcrumbs && context.breadcrumbs.length > 0) {
-      elements.contextPath.textContent = context.breadcrumbs.join(' > ');
+    if (context && context.path) {
+      elements.contextDot.classList.remove('disconnected');
+      elements.contextPath.textContent = context.path;
+      if (context.breadcrumbs && context.breadcrumbs.length > 0) {
+        elements.contextPath.textContent = context.breadcrumbs.join(' > ');
+      }
+    } else {
+      elements.contextDot.classList.add('disconnected');
+      elements.contextPath.textContent = 'Admin 페이지에 접속해주세요';
     }
-  } else {
+  } catch {
     elements.contextDot.classList.add('disconnected');
     elements.contextPath.textContent = 'Admin 페이지에 접속해주세요';
   }

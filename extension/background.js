@@ -340,9 +340,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ error: 'No active tab' });
         return;
       }
-      extractContextFromTab(tab).then((context) => {
+      return extractContextFromTab(tab).then((context) => {
         sendResponse(context || { error: 'Context extraction failed' });
       });
+    }).catch(() => {
+      sendResponse({ error: 'Context extraction failed' });
     });
     return true;
   }
