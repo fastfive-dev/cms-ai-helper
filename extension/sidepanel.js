@@ -5,8 +5,6 @@ const elements = {
   userInput: document.getElementById('userInput'),
   sendBtn: document.getElementById('sendBtn'),
   clearBtn: document.getElementById('clearBtn'),
-  contextToggle: document.getElementById('contextToggle'),
-  screenshotToggle: document.getElementById('screenshotToggle'),
   contextBar: document.getElementById('contextBar'),
   contextPath: document.getElementById('contextPath'),
   contextDot: document.getElementById('contextDot'),
@@ -14,8 +12,6 @@ const elements = {
 };
 
 let conversationHistory = [];
-let includeContext = true;
-let includeScreenshot = true;
 let isLoading = false;
 let currentPageContext = null;
 
@@ -193,10 +189,7 @@ async function sendMessage() {
 
   addLoadingMessage();
 
-  let pageContext = null;
-  if (includeContext) {
-    pageContext = await fetchPageContext();
-  }
+  const pageContext = await fetchPageContext();
 
   try {
     const response = await new Promise((resolve, reject) => {
@@ -206,7 +199,7 @@ async function sendMessage() {
           payload: {
             messages: conversationHistory,
             pageContext,
-            includeScreenshot,
+            includeScreenshot: true,
           },
         },
         (result) => {
@@ -401,13 +394,3 @@ elements.clearBtn.addEventListener('click', () => {
   });
 });
 
-elements.contextToggle.addEventListener('click', () => {
-  includeContext = !includeContext;
-  elements.contextToggle.classList.toggle('active', includeContext);
-  elements.contextBar.style.display = includeContext ? 'flex' : 'none';
-});
-
-elements.screenshotToggle.addEventListener('click', () => {
-  includeScreenshot = !includeScreenshot;
-  elements.screenshotToggle.classList.toggle('active', includeScreenshot);
-});
