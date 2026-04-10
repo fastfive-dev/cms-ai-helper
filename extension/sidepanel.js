@@ -381,7 +381,6 @@ elements.clearBtn.addEventListener('click', () => {
     <div class="welcome-icon">
       <img src="icons/icon48.png" alt="">
     </div>
-    <h2>Admin Helper</h2>
     <p>현재 보고 있는 어드민 화면에 대해<br>궁금한 점을 물어보세요.</p>
     <div class="welcome-hints">
       <button class="hint-chip" data-hint="이 화면에서 뭘 할 수 있어?">이 화면에서 뭘 할 수 있어?</button>
