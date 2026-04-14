@@ -1,4 +1,4 @@
-// Side panel chat logic for FastFive Admin Helper.
+// Side panel chat logic for FASTFIVE Admin Helper.
 
 const elements = {
   messages: document.getElementById('messages'),
@@ -90,11 +90,11 @@ async function updateContextBar() {
       }
     } else {
       elements.contextDot.classList.add('disconnected');
-      elements.contextPath.textContent = 'Admin 페이지에 접속해주세요';
+      elements.contextPath.textContent = 'CMS 페이지에 접속해주세요';
     }
   } catch {
     elements.contextDot.classList.add('disconnected');
-    elements.contextPath.textContent = 'Admin 페이지에 접속해주세요';
+    elements.contextPath.textContent = 'CMS 페이지에 접속해주세요';
   }
 }
 

@@ -1,4 +1,4 @@
-# FastFive Admin 사용 가이드
+# FASTFIVE CMS 사용 가이드
 
 > 이 파일은 `scripts/generate-knowledge.js`로 자동 생성됩니다.
 > 마지막 생성: 2026-04-10

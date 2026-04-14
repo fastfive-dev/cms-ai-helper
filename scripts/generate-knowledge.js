@@ -311,7 +311,7 @@ function extractConstants() {
 function generateMarkdown(menus, routeData, constants) {
   const lines = [];
 
-  lines.push('# FastFive Admin 사용 가이드');
+  lines.push('# FASTFIVE CMS 사용 가이드');
   lines.push('');
   lines.push('> 이 파일은 `scripts/generate-knowledge.js`로 자동 생성됩니다.');
   lines.push(`> 마지막 생성: ${new Date().toISOString().split('T')[0]}`);
