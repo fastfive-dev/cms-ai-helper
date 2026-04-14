@@ -81,8 +81,23 @@ let streamingText = '';
 // --- SSE (Server-Sent Events) ---
 // ============================================================
 
-const SERVER_URL = 'http://localhost:4098';
+let SERVER_URL = 'http://localhost:4098';
 let eventSource = null;
+
+// Load server URL from storage
+chrome.storage.sync.get('serverUrl', (data) => {
+  if (data.serverUrl) {
+    SERVER_URL = data.serverUrl;
+    connectSSE();
+  }
+});
+
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.serverUrl?.newValue) {
+    SERVER_URL = changes.serverUrl.newValue;
+    connectSSE();
+  }
+});
 
 function connectSSE() {
   if (eventSource) {

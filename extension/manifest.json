@@ -56,7 +56,8 @@
     "https://cms-dev.slowfive.com/*",
     "https://cms-staging.slowfive.com/*",
     "https://cms.slowfive.com/*",
-    "http://localhost/*"
+    "http://localhost/*",
+    "https://*.ngrok-free.dev/*"
   ],
   "web_accessible_resources": [
     {

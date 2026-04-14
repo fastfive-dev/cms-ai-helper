@@ -23,11 +23,26 @@ const AUTH_CONFIG = {
   userinfoEndpoint: 'https://www.googleapis.com/oauth2/v2/userinfo',
 };
 
+const DEFAULT_SERVER_URL = 'http://localhost:4098';
+
 const API_CONFIG = {
-  baseUrl: 'http://localhost:4098',
+  baseUrl: DEFAULT_SERVER_URL,
   // 세션 ID는 탭별로 관리
   sessions: new Map(), // tabId -> sessionId
 };
+
+// Load server URL from storage
+chrome.storage.sync.get('serverUrl', (data) => {
+  if (data.serverUrl) {
+    API_CONFIG.baseUrl = data.serverUrl;
+  }
+});
+
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.serverUrl?.newValue) {
+    API_CONFIG.baseUrl = changes.serverUrl.newValue;
+  }
+});
 
 const ADMIN_URL_PATTERNS = [
   'admin.fastfive.co.kr',

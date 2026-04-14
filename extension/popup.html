@@ -245,6 +245,21 @@
     <button class="logout-btn" id="logoutBtn">로그아웃</button>
   </div>
 
+  <div class="server-section" id="serverSection">
+    <div style="border-top: 1px solid #4A4543; margin-top: 16px; padding-top: 16px;">
+      <label style="font-size: 11px; color: #9B9590; display: block; margin-bottom: 6px;">Server URL</label>
+      <div style="display: flex; gap: 6px;">
+        <input type="text" id="serverUrlInput" placeholder="https://xxx.ngrok-free.dev"
+          style="flex:1; padding: 8px 10px; background: #3A3735; border: 1px solid #4A4543; border-radius: 6px; color: #E8E5E0; font-size: 12px; outline: none;">
+        <button id="saveServerBtn"
+          style="padding: 8px 12px; background: #C15F3C; color: #fff; border: none; border-radius: 6px; font-size: 12px; cursor: pointer;">
+          Save
+        </button>
+      </div>
+      <div id="serverSaveMsg" style="display:none; font-size: 11px; color: #6BBF8A; margin-top: 6px;"></div>
+    </div>
+  </div>
+
   <script src="popup.js"></script>
 </body>
 </html>
