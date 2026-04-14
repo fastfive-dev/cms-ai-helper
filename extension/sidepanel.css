@@ -385,6 +385,74 @@ body {
   40% { transform: scale(1); opacity: 1; }
 }
 
+/* ========== Thinking (실시간) ========== */
+.thinking-live {
+  padding: 2px 0;
+}
+
+.thinking-live .thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-neutral);
+}
+
+.thinking-live .thinking-indicator {
+  width: 6px;
+  height: 6px;
+  background: var(--primary);
+  border-radius: 50%;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+.thinking-live .thinking-text {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-top: 6px;
+  max-height: 120px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ========== Thinking Block (응답 내 접기/펼치기) ========== */
+.thinking-block {
+  border-left: 2px solid var(--border-hover);
+  margin-bottom: 10px;
+  padding-left: 10px;
+  font-size: 12px;
+  color: var(--text-neutral);
+}
+
+.thinking-block summary {
+  cursor: pointer;
+  padding: 4px 0;
+  user-select: none;
+  font-size: 12px;
+  color: var(--text-neutral);
+}
+
+.thinking-block summary:hover {
+  color: var(--text-secondary);
+}
+
+.thinking-block .thinking-content {
+  padding: 6px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
 /* ========== Error ========== */
 .error-text {
   color: var(--danger) !important;

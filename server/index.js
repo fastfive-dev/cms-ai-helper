@@ -37,8 +37,8 @@ try {
 }
 
 // Admin Helper 시스템 프롬프트
-const SYSTEM_PROMPT = `당신은 FASTFIVE 어드민 사이트 사용 도우미입니다.
-사용자가 현재 보고 있는 어드민 화면 정보와 스크린샷이 함께 제공될 수 있습니다.
+const SYSTEM_PROMPT = `당신은 FASTFIVE CMS 사이트 사용 도우미입니다.
+사용자가 현재 보고 있는 CMS 화면 정보와 스크린샷이 함께 제공될 수 있습니다.
 화면 정보를 참고하여 해당 화면의 사용 방법을 친절하고 구체적으로 안내해주세요.
 
 ## 응답 가이드라인
@@ -122,8 +122,8 @@ app.use(
             }
             const allowed = [
                 "https://cms-dev.slowfive.com",
-                "https://cms-staging.slowfive.com/",
-                "https://cms.slowfive.com/"
+                "https://cms-staging.slowfive.com",
+                "https://cms.slowfive.com"
             ];
             if (allowed.includes(origin)) return callback(null, true);
             callback(new Error("Not allowed by CORS"));
@@ -213,6 +213,8 @@ app.post("/session/:sessionID/message", async (req, res) => {
 
     const messageID = makeId("msg");
     let accumulatedText = "";
+    let thinkingText = "";
+    const thinkingPartId = makeId("part");
     const timer = setTimeout(() => abortCtrl.abort(), TIMEOUT_MS);
 
     // SSE: step-start
@@ -243,6 +245,8 @@ app.post("/session/:sessionID/message", async (req, res) => {
                 "NotebookEdit",
                 "TodoWrite",
             ],
+            thinking: {type: "enabled", budgetTokens: 10000},
+            includePartialMessages: true,
         };
 
         // 이전 Claude 세션이 있으면 resume
@@ -262,9 +266,31 @@ app.post("/session/:sessionID/message", async (req, res) => {
                 continue;
             }
 
-            // Streaming text deltas
+            // Streaming deltas
             if (msg.type === "stream_event") {
                 const evt = msg.event;
+
+                // Thinking deltas
+                if (
+                    evt.type === "content_block_delta" &&
+                    evt.delta?.type === "thinking_delta"
+                ) {
+                    thinkingText += evt.delta.thinking;
+                    broadcast({
+                        type: "message.part.updated",
+                        properties: {
+                            part: {
+                                id: thinkingPartId,
+                                sessionID: session.id,
+                                messageID,
+                                type: "thinking",
+                                text: thinkingText,
+                            },
+                        },
+                    });
+                }
+
+                // Text deltas
                 if (
                     evt.type === "content_block_delta" &&
                     evt.delta?.type === "text_delta"
@@ -338,6 +364,7 @@ app.post("/session/:sessionID/message", async (req, res) => {
     // HTTP 응답
     res.json({
         text: accumulatedText,
+        thinking: thinkingText || null,
         sessionId: session.id,
         parts: accumulatedText
             ? [{type: "text", text: accumulatedText}]

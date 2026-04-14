@@ -14,6 +14,73 @@ const elements = {
 let conversationHistory = [];
 let isLoading = false;
 let currentPageContext = null;
+let lastThinkingText = '';
+
+// ============================================================
+// --- SSE (Server-Sent Events) ---
+// ============================================================
+
+const SERVER_URL = 'http://localhost:4098';
+let eventSource = null;
+
+function connectSSE() {
+  if (eventSource) {
+    eventSource.close();
+  }
+  try {
+    eventSource = new EventSource(`${SERVER_URL}/event`);
+    eventSource.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.type === 'message.part.updated') {
+          const part = data.properties?.part;
+          if (part?.type === 'thinking') {
+            lastThinkingText = part.text || '';
+            showThinkingInLoadingMessage(lastThinkingText);
+          }
+        }
+      } catch {
+        // ignore parse errors
+      }
+    };
+    eventSource.onerror = () => {
+      eventSource.close();
+      eventSource = null;
+      setTimeout(connectSSE, 5000);
+    };
+  } catch {
+    setTimeout(connectSSE, 5000);
+  }
+}
+
+function showThinkingInLoadingMessage(text) {
+  const loadingMsg = document.getElementById('loadingMessage');
+  if (!loadingMsg) return;
+
+  const content = loadingMsg.querySelector('.message-content');
+  if (!content) return;
+
+  // 첫 thinking 이벤트: 점 세 개를 thinking 블록으로 교체
+  if (!content.querySelector('.thinking-live')) {
+    content.innerHTML = `
+      <div class="thinking-live">
+        <div class="thinking-header">
+          <span class="thinking-indicator"></span>
+          <span class="thinking-label">사고 중...</span>
+        </div>
+        <div class="thinking-text"></div>
+      </div>
+    `;
+  }
+
+  const thinkingEl = content.querySelector('.thinking-text');
+  if (thinkingEl) {
+    thinkingEl.textContent = text;
+    scrollToBottom();
+  }
+}
+
+connectSSE();
 
 // ============================================================
 // --- Page Context ---
@@ -128,7 +195,7 @@ document.querySelectorAll('.hint-chip').forEach((chip) => {
 // --- Chat ---
 // ============================================================
 
-function addMessage(role, content) {
+function addMessage(role, content, thinkingText) {
   removeWelcomeScreen();
 
   const messageDiv = document.createElement('div');
@@ -138,7 +205,12 @@ function addMessage(role, content) {
   contentDiv.className = 'message-content';
 
   if (role === 'assistant') {
-    contentDiv.innerHTML = renderMarkdown(content);
+    let html = '';
+    if (thinkingText) {
+      html += `<details class="thinking-block"><summary>사고 과정</summary><div class="thinking-content">${escapeHtml(thinkingText)}</div></details>`;
+    }
+    html += renderMarkdown(content);
+    contentDiv.innerHTML = html;
   } else {
     contentDiv.textContent = content;
   }
@@ -184,6 +256,8 @@ async function sendMessage() {
   elements.userInput.value = '';
   autoResize();
 
+  lastThinkingText = '';
+
   addMessage('user', text);
   conversationHistory.push({ role: 'user', content: text });
 
@@ -219,7 +293,8 @@ async function sendMessage() {
     removeLoadingMessage();
 
     const assistantContent = response.content || response.text || '응답을 받을 수 없습니다.';
-    addMessage('assistant', assistantContent);
+    const thinkingContent = response.thinking || lastThinkingText || '';
+    addMessage('assistant', assistantContent, thinkingContent);
     conversationHistory.push({ role: 'assistant', content: assistantContent });
   } catch (error) {
     removeLoadingMessage();
@@ -371,7 +446,7 @@ elements.clearBtn.addEventListener('click', () => {
   welcome.className = 'welcome';
   welcome.id = 'welcomeScreen';
   welcome.innerHTML = `
-    <p>현재 보고 있는 어드민 화면에 대해<br>궁금한 점을 물어보세요.</p>
+    <p>현재 보고 있는 CMS 화면에 대해<br>궁금한 점을 물어보세요.</p>
     <div class="welcome-hints">
       <button class="hint-chip" data-hint="이 화면에서 뭘 할 수 있어?">이 화면에서 뭘 할 수 있어?</button>
       <button class="hint-chip" data-hint="각 필드가 무슨 뜻이야?">각 필드가 무슨 뜻이야?</button>

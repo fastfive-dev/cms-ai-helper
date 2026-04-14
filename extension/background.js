@@ -36,8 +36,8 @@ const ADMIN_URL_PATTERNS = [
   'localhost',
 ];
 
-const SYSTEM_CONTEXT = `당신은 FASTFIVE 어드민 사이트 사용 도우미입니다.
-사용자가 현재 보고 있는 어드민 화면 정보가 함께 제공됩니다.
+const SYSTEM_CONTEXT = `당신은 FASTFIVE CMS 사이트 사용 도우미입니다.
+사용자가 현재 보고 있는 CMS 화면 정보가 함께 제공됩니다.
 화면 정보를 참고하여 해당 화면의 사용 방법을 친절하고 구체적으로 안내해주세요.
 
 ## 응답 규칙
@@ -426,13 +426,13 @@ async function handleChatRequest(payload) {
         throw new Error(`서버 오류: ${retryResponse.status}`);
       }
       const retryData = await retryResponse.json();
-      return { content: extractResponseText(retryData) };
+      return { content: extractResponseText(retryData), thinking: retryData.thinking || null };
     }
     throw new Error(`서버 오류: ${response.status}`);
   }
 
   const data = await response.json();
-  return { content: extractResponseText(data) };
+  return { content: extractResponseText(data), thinking: data.thinking || null };
 }
 
 function extractResponseText(data) {
