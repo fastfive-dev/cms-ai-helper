@@ -17,15 +17,14 @@
   }
 
   function extractBreadcrumbs() {
-    // PrimeVue breadcrumb: 가장 안쪽 텍스트 요소만 선택 (li > a/span 중복 방지)
+    // PrimeVue breadcrumb 또는 일반적인 breadcrumb 요소
     const breadcrumbEls = document.querySelectorAll(
-      '.p-breadcrumb .p-menuitem-text, .p-breadcrumb .p-menuitem-link > span, ' +
-      '.breadcrumb-item, [class*="breadcrumb"] a'
+      '.p-breadcrumb li, .breadcrumb-item, [class*="breadcrumb"] a, [class*="breadcrumb"] span'
     );
     const items = [];
     breadcrumbEls.forEach((element) => {
       const text = element.textContent.trim();
-      if (text && text !== '/' && text !== '>' && !items.includes(text)) {
+      if (text && text !== '/' && text !== '>') {
         items.push(text);
       }
     });

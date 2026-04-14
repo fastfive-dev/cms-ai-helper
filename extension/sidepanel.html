@@ -10,11 +10,7 @@
   <div class="app">
     <!-- Header -->
     <header class="header">
-      <div class="header-context" id="contextBar">
-        <span class="context-dot" id="contextDot"></span>
-        <span class="context-label">현재 페이지</span>
-        <span class="context-path" id="contextPath">감지 중...</span>
-      </div>
+      <div class="header-title"></div>
       <div class="header-actions">
         <button id="clearBtn" class="btn-new-chat" title="대화 초기화">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -26,15 +22,22 @@
       </div>
     </header>
 
+    <!-- Page context bar -->
+    <div class="context-bar" id="contextBar">
+      <span class="context-dot" id="contextDot"></span>
+      <span class="context-label">현재 페이지</span>
+      <span class="context-path" id="contextPath">감지 중...</span>
+    </div>
+
     <!-- Messages -->
     <div class="messages" id="messages">
       <!-- Welcome screen (replaced on first message) -->
       <div class="welcome" id="welcomeScreen">
         <p>현재 보고 있는 CMS 화면에 대해<br>궁금한 점을 물어보세요.</p>
         <div class="welcome-hints">
-          <button class="hint-chip" data-hint="이 화면 활용 예시 보여줘">이 화면 활용 예시 보여줘</button>
           <button class="hint-chip" data-hint="이 화면에서 뭘 할 수 있어?">이 화면에서 뭘 할 수 있어?</button>
-          <button class="hint-chip" data-hint="관련된 다른 메뉴가 있어?">관련된 다른 메뉴가 있어?</button>
+          <button class="hint-chip" data-hint="각 필드가 무슨 뜻이야?">각 필드가 무슨 뜻이야?</button>
+          <button class="hint-chip" data-hint="이 화면의 사용 순서를 알려줘">이 화면의 사용 순서를 알려줘</button>
         </div>
       </div>
     </div>

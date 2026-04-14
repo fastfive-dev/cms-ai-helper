@@ -44,20 +44,19 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: 10px 14px;
   background: var(--surface-card);
   border-bottom: 1px solid var(--border-standard);
   flex-shrink: 0;
-  gap: 8px;
 }
 
-.header-context {
+.header-title {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  min-width: 0;
-  flex: 1;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-strong);
 }
 
 .header-icon {
@@ -132,7 +131,18 @@ body {
   flex-shrink: 0;
 }
 
-/* ========== Context (in header) ========== */
+/* ========== Context Bar ========== */
+.context-bar {
+  padding: 7px 14px;
+  background: var(--primary-subtle);
+  border-bottom: 1px solid #d6e3ff;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .context-dot {
   width: 6px;
   height: 6px;
@@ -284,13 +294,6 @@ body {
 
 .message.assistant .message-content a:hover {
   text-decoration: underline;
-}
-
-.message.assistant .message-content hr {
-  border: none;
-  height: 1px;
-  background: var(--border-standard);
-  margin: 12px 0;
 }
 
 /* ========== Welcome Message ========== */
