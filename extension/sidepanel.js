@@ -227,6 +227,85 @@ document.querySelectorAll('.hint-chip').forEach((chip) => {
 });
 
 // ============================================================
+// --- Auto Intro ---
+// ============================================================
+
+async function sendAutoIntro() {
+  if (isLoading) return;
+
+  const pageContext = await fetchPageContext();
+  if (!pageContext || !pageContext.path) return;
+
+  isLoading = true;
+  elements.sendBtn.disabled = true;
+  removeWelcomeScreen();
+
+  lastThinkingText = '';
+  prevThinkingLen = 0;
+  currentSentence = '';
+  streamingText = '';
+
+  addLoadingMessage();
+
+  const autoPrompt = '이 화면에 대해 안내해주세요';
+
+  try {
+    const response = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(
+        {
+          type: 'chat',
+          payload: {
+            messages: [{ role: 'user', content: autoPrompt }],
+            pageContext,
+            includeScreenshot: true,
+          },
+        },
+        (result) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          if (result && result.error) {
+            reject(new Error(result.error));
+            return;
+          }
+          resolve(result);
+        }
+      );
+    });
+
+    const assistantContent = response.content || response.text || '';
+    const thinkingContent = response.thinking || lastThinkingText || '';
+
+    const loadingMsg = document.getElementById('loadingMessage');
+    if (loadingMsg && streamingText) {
+      loadingMsg.removeAttribute('id');
+      const content = loadingMsg.querySelector('.message-content');
+      let html = '';
+      if (thinkingContent) {
+        html += `<details class="thinking-block"><summary>사고 과정</summary><div class="thinking-content">${escapeHtml(thinkingContent)}</div></details>`;
+      }
+      html += renderMarkdown(assistantContent);
+      content.innerHTML = html;
+    } else {
+      removeLoadingMessage();
+      if (assistantContent) {
+        addMessage('assistant', assistantContent, thinkingContent);
+      }
+    }
+
+    // 대화 이력에 추가 (후속 질문의 컨텍스트 유지)
+    conversationHistory.push({ role: 'user', content: autoPrompt });
+    conversationHistory.push({ role: 'assistant', content: assistantContent });
+  } catch {
+    removeLoadingMessage();
+  } finally {
+    isLoading = false;
+    updateSendButton();
+  }
+}
+
+// ============================================================
 // --- Chat ---
 // ============================================================
 
@@ -395,7 +474,7 @@ function renderMarkdown(text) {
       return row.split('|').slice(1, -1).map((cell) => { return cell.trim(); });
     };
 
-    const isSeparator = /^\|[\s\-:]+\|$/.test(rows[1]);
+    const isSeparator = /^\|[\s\-:|]+$/.test(rows[1]);
     let tableHtml = '<table>';
 
     if (isSeparator && rows.length >= 3) {
@@ -425,6 +504,9 @@ function renderMarkdown(text) {
     return tableHtml;
   });
 
+  // Horizontal rule (---)
+  html = html.replace(/^---$/gm, '<hr>');
+
   // Bold (**)
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
@@ -447,8 +529,9 @@ function renderMarkdown(text) {
   html = html.replace(/\n/g, '<br>');
 
   // Clean up extra <br> around block elements
-  html = html.replace(/<br><(ul|ol|pre|li|table|thead|tbody|tr|th|td)/g, '<$1');
+  html = html.replace(/<br><(ul|ol|pre|li|table|thead|tbody|tr|th|td|hr)/g, '<$1');
   html = html.replace(/<\/(ul|ol|pre|li|table|thead|tbody|tr|th|td)><br>/g, '</$1>');
+  html = html.replace(/<hr><br>/g, '<hr>');
 
   return html;
 }
@@ -491,32 +574,8 @@ elements.clearBtn.addEventListener('click', () => {
   conversationHistory = [];
   elements.messages.innerHTML = '';
   chrome.runtime.sendMessage({ type: 'reset_session' });
-
-  // Re-create welcome screen
-  const welcome = document.createElement('div');
-  welcome.className = 'welcome';
-  welcome.id = 'welcomeScreen';
-  welcome.innerHTML = `
-    <p>현재 보고 있는 CMS 화면에 대해<br>궁금한 점을 물어보세요.</p>
-    <div class="welcome-hints">
-      <button class="hint-chip" data-hint="이 화면에서 뭘 할 수 있어?">이 화면에서 뭘 할 수 있어?</button>
-      <button class="hint-chip" data-hint="각 필드가 무슨 뜻이야?">각 필드가 무슨 뜻이야?</button>
-      <button class="hint-chip" data-hint="이 화면의 사용 순서를 알려줘">이 화면의 사용 순서를 알려줘</button>
-    </div>
-  `;
-  elements.messages.appendChild(welcome);
-  elements.welcomeScreen = welcome;
-
-  // Re-bind hint chips
-  welcome.querySelectorAll('.hint-chip').forEach((chip) => {
-    chip.addEventListener('click', () => {
-      const hint = chip.getAttribute('data-hint');
-      if (hint) {
-        elements.userInput.value = hint;
-        updateSendButton();
-        sendMessage();
-      }
-    });
-  });
+  sendAutoIntro();
 });
 
+// 사이드패널 최초 로드 시 자동 안내
+sendAutoIntro();
