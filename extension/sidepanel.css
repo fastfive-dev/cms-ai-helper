@@ -286,6 +286,7 @@ body {
 .message.assistant .message-content ol {
   padding-left: 20px;
   margin: 8px 0;
+  list-style-position: inside;
 }
 
 .message.assistant .message-content li {
