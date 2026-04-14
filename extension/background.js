@@ -1,4 +1,4 @@
-// Background service worker for FastFive Admin Helper.
+// Background service worker for FASTFIVE Admin Helper.
 // Handles: authentication, side panel management, chat proxy.
 
 self.addEventListener("unhandledrejection", (event) => {
@@ -35,6 +35,16 @@ const ADMIN_URL_PATTERNS = [
   'cms-dev.slowfive.com',
   'localhost',
 ];
+
+const SYSTEM_CONTEXT = `당신은 FASTFIVE 어드민 사이트 사용 도우미입니다.
+사용자가 현재 보고 있는 어드민 화면 정보가 함께 제공됩니다.
+화면 정보를 참고하여 해당 화면의 사용 방법을 친절하고 구체적으로 안내해주세요.
+
+## 응답 규칙
+- 사용자가 보고 있는 화면 기준으로 답변하세요
+- 단계별 안내 시 번호를 매겨주세요
+- 관련 메뉴가 있으면 함께 안내하세요
+- 한국어로 답변하세요`;
 
 // ============================================================
 // --- Authentication ---
@@ -235,31 +245,12 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => 
 // ============================================================
 
 async function getActiveAdminTab() {
-  // lastFocusedWindow가 service worker에서 더 안정적
   const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (tabs[0]) {
     return tabs[0];
   }
-  // fallback: 모든 윈도우에서 admin URL인 활성 탭 찾기
   const allTabs = await chrome.tabs.query({ active: true });
   return allTabs.find((tab) => { return tab.url && isAdminUrl(tab.url); }) || null;
-}
-
-function getBasicContextFromTab(tab) {
-  try {
-    const url = new URL(tab.url);
-    return {
-      url: tab.url,
-      path: url.pathname,
-      title: tab.title || '',
-      breadcrumbs: null,
-      activeMenu: null,
-      pageContent: {},
-      errors: null,
-    };
-  } catch {
-    return null;
-  }
 }
 
 async function extractContextFromTab(tab) {
@@ -309,7 +300,161 @@ async function extractContextFromTab(tab) {
   }
 
   // 3차: 최소한 탭 URL 정보라도 반환
-  return getBasicContextFromTab(tab);
+  try {
+    const url = new URL(tab.url);
+    return {
+      url: tab.url,
+      path: url.pathname,
+      title: tab.title || '',
+      breadcrumbs: null,
+      activeMenu: null,
+      pageContent: {},
+      errors: null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================
+// --- Chat ---
+// ============================================================
+
+async function getOrCreateSession(tabId) {
+  if (API_CONFIG.sessions.has(tabId)) {
+    return API_CONFIG.sessions.get(tabId);
+  }
+
+  const response = await fetch(`${API_CONFIG.baseUrl}/session`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    throw new Error(`세션 생성 실패: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const sessionId = data.sessionId || data.id;
+
+  if (!sessionId) {
+    throw new Error('세션 ID를 받지 못했습니다.');
+  }
+
+  // 세션 생성 후 시스템 컨텍스트를 첫 메시지로 전송
+  await fetch(`${API_CONFIG.baseUrl}/session/${sessionId}/message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      parts: [{ type: 'text', text: SYSTEM_CONTEXT }],
+    }),
+  });
+
+  API_CONFIG.sessions.set(tabId, sessionId);
+  return sessionId;
+}
+
+async function handleChatRequest(payload) {
+  const { messages, pageContext } = payload;
+
+  // 현재 탭의 세션 ID
+  const tab = await getActiveAdminTab();
+  const tabId = tab?.id || 'default';
+  const sessionId = await getOrCreateSession(tabId);
+
+  // 사용자 메시지 + 페이지 컨텍스트 조합
+  const lastMessage = messages[messages.length - 1];
+  let text = lastMessage.content;
+
+  if (pageContext) {
+    const parts = ['\n\n---\n[현재 Admin 화면 정보]'];
+    if (pageContext.path) parts.push(`경로: ${pageContext.path}`);
+    if (pageContext.breadcrumbs?.length > 0)
+      parts.push(`메뉴: ${pageContext.breadcrumbs.join(' > ')}`);
+    if (pageContext.pageContent) {
+      const c = pageContext.pageContent;
+      if (c.headers?.length > 0) parts.push(`페이지 제목: ${c.headers.join(', ')}`);
+      if (c.tableColumns?.length > 0) parts.push(`테이블 컬럼: ${c.tableColumns.join(', ')}`);
+      if (c.formFields?.length > 0) parts.push(`폼 필드: ${c.formFields.join(', ')}`);
+      if (c.tabs?.length > 0) parts.push(`탭: ${c.tabs.join(', ')}`);
+      if (c.actions?.length > 0) parts.push(`버튼: ${c.actions.join(', ')}`);
+    }
+    if (pageContext.errors?.length > 0)
+      parts.push(`에러: ${pageContext.errors.join('; ')}`);
+    text += parts.join('\n');
+  }
+
+  // 메시지 parts 구성
+  const msgParts = [{ type: 'text', text }];
+
+  // 스크린샷 캡처
+  try {
+    const dataUrl = await chrome.tabs.captureVisibleTab(null, {
+      format: 'jpeg',
+      quality: 70,
+    });
+    const base64 = dataUrl.split(',')[1];
+    if (base64) {
+      msgParts.push({
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/jpeg', data: base64 },
+      });
+    }
+  } catch {
+    // 스크린샷 실패해도 계속 진행
+  }
+
+  const response = await fetch(`${API_CONFIG.baseUrl}/session/${sessionId}/message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parts: msgParts, pageContext }),
+  });
+
+  if (!response.ok) {
+    // 세션 만료 시 재생성
+    if (response.status === 404) {
+      API_CONFIG.sessions.delete(tabId);
+      const newSessionId = await getOrCreateSession(tabId);
+      const retryResponse = await fetch(
+        `${API_CONFIG.baseUrl}/session/${newSessionId}/message`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ parts: [{ type: 'text', text }], pageContext }),
+        },
+      );
+      if (!retryResponse.ok) {
+        throw new Error(`서버 오류: ${retryResponse.status}`);
+      }
+      const retryData = await retryResponse.json();
+      return { content: extractResponseText(retryData) };
+    }
+    throw new Error(`서버 오류: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return { content: extractResponseText(data) };
+}
+
+function extractResponseText(data) {
+  if (typeof data === 'string') return data;
+  if (data.text) return data.text;
+  if (data.content) {
+    if (typeof data.content === 'string') return data.content;
+    if (Array.isArray(data.content)) {
+      return data.content
+        .filter((b) => b.type === 'text')
+        .map((b) => b.text)
+        .join('\n');
+    }
+  }
+  if (data.parts) {
+    return data.parts
+      .filter((p) => p.type === 'text')
+      .map((p) => p.text)
+      .join('\n');
+  }
+  if (data.message) return data.message;
+  return JSON.stringify(data);
 }
 
 // ============================================================
@@ -349,7 +494,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // 세션 리셋 (대화 초기화)
+  // 세션 리셋 (대화 초기화 - sidepanel에서 호출)
   if (message.type === 'reset_session') {
     getActiveAdminTab().then((tab) => {
       const tabId = tab?.id || 'default';
@@ -366,7 +511,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
 
-    handleChatRequest(message.payload, sender)
+    handleChatRequest(message.payload)
       .then((result) => { sendResponse(result); })
       .catch((error) => { sendResponse({ error: error.message }); });
     return true;
@@ -374,228 +519,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return false;
 });
-
-const SYSTEM_CONTEXT = `당신은 FastFive 어드민 사이트 사용 도우미입니다.
-사용자가 현재 보고 있는 어드민 화면 정보가 함께 제공됩니다.
-화면 정보를 참고하여 해당 화면의 사용 방법을 친절하고 구체적으로 안내해주세요.
-
-## FastFive Admin 주요 기능
-- 출입 관리: 카드 발급/회수, RF 카드, 출입 레벨 그룹, 방문자 이력
-- 공간 관리: 지점 관리, 라운지 예약, 공간 계약
-- 예약 관리: 공간 예약, 사용 이력, 승인 대기, 개별 결제
-- 계약 관리: 멤버십, 갱신, 부가 서비스, 자동 연장
-- 커뮤니케이션: 메시지 발송, 알림, 공지사항, FAQ, 팝업
-- 사용자 관리: 멤버 그룹(입주사), 멤버 관리
-- 멤버서비스: 혜택, 커뮤니티 이벤트, 파트너십, 크레딧 프로모션
-- 회계 (SystemAdmin 전용): 청구, 결제, 입금, 정산
-- 커뮤니티: 피드 규칙, 신고 처리
-
-## 응답 규칙
-- 사용자가 보고 있는 화면 기준으로 답변하세요
-- 단계별 안내 시 번호를 매겨주세요
-- 관련 메뉴가 있으면 함께 안내하세요
-- 한국어로 답변하세요`;
-
-async function getOrCreateSession() {
-  const tab = await getActiveAdminTab();
-  const tabId = tab?.id || 'default';
-
-  if (API_CONFIG.sessions.has(tabId)) {
-    return API_CONFIG.sessions.get(tabId);
-  }
-
-  const response = await fetch(`${API_CONFIG.baseUrl}/session`, {
-    method: 'POST',
-  });
-
-  if (!response.ok) {
-    throw new Error(`세션 생성 실패: ${response.status}`);
-  }
-
-  const data = await response.json();
-  const sessionId = data.sessionId || data.id || data.session_id;
-
-  if (!sessionId) {
-    throw new Error('세션 ID를 받지 못했습니다.');
-  }
-
-  // 세션 생성 후 시스템 컨텍스트를 첫 메시지로 전송
-  let systemText = SYSTEM_CONTEXT;
-
-  const knowledge = await loadKnowledge();
-  if (knowledge) {
-    systemText += '\n\n## 상세 사용 가이드\n' + knowledge;
-  }
-
-  await fetch(`${API_CONFIG.baseUrl}/session/${sessionId}/message`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      parts: [{ type: 'text', text: systemText }],
-    }),
-  });
-
-  API_CONFIG.sessions.set(tabId, sessionId);
-  return sessionId;
-}
-
-function buildMessageText(userMessage, pageContext) {
-  let text = userMessage;
-
-  if (pageContext) {
-    const parts = ['\n\n---\n[현재 Admin 화면 정보]'];
-    if (pageContext.path) {
-      parts.push(`경로: ${pageContext.path}`);
-    }
-    if (pageContext.breadcrumbs && pageContext.breadcrumbs.length > 0) {
-      parts.push(`메뉴: ${pageContext.breadcrumbs.join(' > ')}`);
-    }
-    if (pageContext.pageContent) {
-      const content = pageContext.pageContent;
-      if (content.headers && content.headers.length > 0) {
-        parts.push(`페이지 제목: ${content.headers.join(', ')}`);
-      }
-      if (content.tableColumns && content.tableColumns.length > 0) {
-        parts.push(`테이블 컬럼: ${content.tableColumns.join(', ')}`);
-      }
-      if (content.formFields && content.formFields.length > 0) {
-        parts.push(`폼 필드: ${content.formFields.join(', ')}`);
-      }
-      if (content.tabs && content.tabs.length > 0) {
-        parts.push(`탭: ${content.tabs.join(', ')}`);
-      }
-      if (content.actions && content.actions.length > 0) {
-        parts.push(`버튼: ${content.actions.join(', ')}`);
-      }
-    }
-    if (pageContext.errors && pageContext.errors.length > 0) {
-      parts.push(`에러: ${pageContext.errors.join('; ')}`);
-    }
-    text += parts.join('\n');
-  }
-
-  return text;
-}
-
-async function captureScreenshot() {
-  try {
-    const dataUrl = await chrome.tabs.captureVisibleTab(null, {
-      format: 'jpeg',
-      quality: 70,
-    });
-    // data:image/jpeg;base64,... → base64 부분만 추출
-    const base64 = dataUrl.split(',')[1];
-    return base64;
-  } catch {
-    return null;
-  }
-}
-
-async function loadKnowledge() {
-  try {
-    const url = chrome.runtime.getURL('knowledge.md');
-    const response = await fetch(url);
-    if (response.ok) {
-      return await response.text();
-    }
-  } catch {
-    // knowledge.md가 없어도 동작
-  }
-  return null;
-}
-
-async function handleChatRequest(payload) {
-  const { messages, pageContext, includeScreenshot } = payload;
-
-  const sessionId = await getOrCreateSession();
-
-  const lastMessage = messages[messages.length - 1];
-  const text = buildMessageText(lastMessage.content, pageContext);
-
-  // 메시지 parts 구성: 텍스트 + (선택) 스크린샷
-  const parts = [{ type: 'text', text }];
-
-  if (includeScreenshot) {
-    const screenshot = await captureScreenshot();
-    if (screenshot) {
-      parts.push({
-        type: 'image',
-        source: {
-          type: 'base64',
-          media_type: 'image/jpeg',
-          data: screenshot,
-        },
-      });
-    }
-  }
-
-  const response = await fetch(`${API_CONFIG.baseUrl}/session/${sessionId}/message`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ parts }),
-  });
-
-  if (!response.ok) {
-    // 세션 만료 시 재생성 시도
-    if (response.status === 404) {
-      const tab = await getActiveAdminTab();
-      const tabId = tab?.id || 'default';
-      API_CONFIG.sessions.delete(tabId);
-
-      const newSessionId = await getOrCreateSession();
-      const retryResponse = await fetch(`${API_CONFIG.baseUrl}/session/${newSessionId}/message`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          parts: [{ type: 'text', text }],
-        }),
-      });
-
-      if (!retryResponse.ok) {
-        throw new Error(`서버 오류: ${retryResponse.status}`);
-      }
-
-      const retryData = await retryResponse.json();
-      return { content: extractResponseText(retryData) };
-    }
-
-    throw new Error(`서버 오류: ${response.status}`);
-  }
-
-  const data = await response.json();
-  return { content: extractResponseText(data) };
-}
-
-function extractResponseText(data) {
-  // 응답 형식에 따라 텍스트 추출
-  if (typeof data === 'string') {
-    return data;
-  }
-  if (data.text) {
-    return data.text;
-  }
-  if (data.content) {
-    if (typeof data.content === 'string') {
-      return data.content;
-    }
-    if (Array.isArray(data.content)) {
-      return data.content
-        .filter((block) => { return block.type === 'text'; })
-        .map((block) => { return block.text; })
-        .join('\n');
-    }
-  }
-  if (data.parts) {
-    return data.parts
-      .filter((part) => { return part.type === 'text'; })
-      .map((part) => { return part.text; })
-      .join('\n');
-  }
-  if (data.message) {
-    return data.message;
-  }
-  return JSON.stringify(data);
-}
 
 // ============================================================
 // --- Init ---

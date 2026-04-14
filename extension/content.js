@@ -1,4 +1,4 @@
-// Content script for FastFive Admin Helper.
+// Content script for FASTFIVE Admin Helper.
 // Extracts page context from the admin site.
 
 (() => {
