@@ -16,6 +16,11 @@ services:
       - PORT=4098
       - CLAUDE_SERVE_URL=http://host.docker.internal:4099
       - DB_PATH=/app/data/admin-helper.db
+      - CONFLUENCE_EMAIL=${CONFLUENCE_EMAIL}
+      - CONFLUENCE_API_TOKEN=${CONFLUENCE_API_TOKEN}
+      - CONFLUENCE_SITE=${CONFLUENCE_SITE:-fastfive.atlassian.net}
+      - POLICY_SPACE_ID=${POLICY_SPACE_ID:-58262455}
+      - POLICY_CACHE_TTL_MS=${POLICY_CACHE_TTL_MS:-3600000}
     volumes:
       - server-data:/app/data
     depends_on:
