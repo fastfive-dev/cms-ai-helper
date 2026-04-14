@@ -17,6 +17,7 @@ let currentPageContext = null;
 let lastThinkingText = '';
 let prevThinkingLen = 0;
 let currentSentence = '';
+let streamingText = '';
 
 // ============================================================
 // --- SSE (Server-Sent Events) ---
@@ -39,6 +40,10 @@ function connectSSE() {
           if (part?.type === 'thinking') {
             lastThinkingText = part.text || '';
             updateThinkingSentence(lastThinkingText);
+          }
+          if (part?.type === 'text') {
+            streamingText = part.text || '';
+            showStreamingText(streamingText);
           }
         }
       } catch {
@@ -97,6 +102,17 @@ function showThinkingInLoadingMessage(text) {
     thinkingEl.textContent = text;
     scrollToBottom();
   }
+}
+
+function showStreamingText(text) {
+  const loadingMsg = document.getElementById('loadingMessage');
+  if (!loadingMsg) return;
+
+  const content = loadingMsg.querySelector('.message-content');
+  if (!content) return;
+
+  content.innerHTML = renderMarkdown(text) + '<span class="streaming-cursor"></span>';
+  scrollToBottom();
 }
 
 connectSSE();
@@ -278,6 +294,7 @@ async function sendMessage() {
   lastThinkingText = '';
   prevThinkingLen = 0;
   currentSentence = '';
+  streamingText = '';
 
   addMessage('user', text);
   conversationHistory.push({ role: 'user', content: text });
@@ -311,11 +328,24 @@ async function sendMessage() {
       );
     });
 
-    removeLoadingMessage();
-
     const assistantContent = response.content || response.text || '응답을 받을 수 없습니다.';
     const thinkingContent = response.thinking || lastThinkingText || '';
-    addMessage('assistant', assistantContent, thinkingContent);
+
+    // 스트리밍 중이었으면 기존 메시지를 in-place로 최종 변환 (깜빡임 방지)
+    const loadingMsg = document.getElementById('loadingMessage');
+    if (loadingMsg && streamingText) {
+      loadingMsg.removeAttribute('id');
+      const content = loadingMsg.querySelector('.message-content');
+      let html = '';
+      if (thinkingContent) {
+        html += `<details class="thinking-block"><summary>사고 과정</summary><div class="thinking-content">${escapeHtml(thinkingContent)}</div></details>`;
+      }
+      html += renderMarkdown(assistantContent);
+      content.innerHTML = html;
+    } else {
+      removeLoadingMessage();
+      addMessage('assistant', assistantContent, thinkingContent);
+    }
     conversationHistory.push({ role: 'assistant', content: assistantContent });
   } catch (error) {
     removeLoadingMessage();
