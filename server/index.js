@@ -1,0 +1,415 @@
+import http from "node:http";
+import express from "express";
+import cors from "cors";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import {query} from "@anthropic-ai/claude-agent-sdk";
+import * as db from "./db.js";
+
+// ---------------------------------------------------------------------------
+// Prevent uncaught errors from crashing the process
+// ---------------------------------------------------------------------------
+process.on("uncaughtException", (err) => {
+    console.error(`[admin-helper] uncaughtException: ${err.message}`, err.stack);
+});
+process.on("unhandledRejection", (reason) => {
+    console.error(`[admin-helper] unhandledRejection:`, reason);
+});
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+const __dirname = path.dirname(new URL(import.meta.url).pathname);
+const PORT = parseInt(process.env.PORT, 10) || 4098;
+const DEFAULT_MODEL = process.env.MODEL || "claude-sonnet-4-5-20250929";
+const TIMEOUT_MS = parseInt(process.env.TIMEOUT, 10) || 300000; // 5분
+
+// Knowledge base 로드
+let knowledgeContent = "";
+try {
+    knowledgeContent = fs.readFileSync(
+        path.join(__dirname, "knowledge.md"),
+        "utf-8",
+    );
+} catch {
+    console.warn("[admin-helper] knowledge.md not found, continuing without it");
+}
+
+// Admin Helper 시스템 프롬프트
+const SYSTEM_PROMPT = `당신은 FASTFIVE 어드민 사이트 사용 도우미입니다.
+사용자가 현재 보고 있는 어드민 화면 정보와 스크린샷이 함께 제공될 수 있습니다.
+화면 정보를 참고하여 해당 화면의 사용 방법을 친절하고 구체적으로 안내해주세요.
+
+## 응답 가이드라인
+- 현재 화면에서 가능한 작업을 구체적으로 설명하세요
+- 버튼, 필터, 탭 등 UI 요소를 언급할 때는 정확한 명칭을 사용하세요
+- 단계별로 안내할 때는 번호를 매겨주세요
+- 관련된 다른 메뉴나 기능이 있으면 함께 안내해주세요
+- 한국어로 답변하세요
+${knowledgeContent ? "\n## 상세 사용 가이드\n" + knowledgeContent : ""}`;
+
+// ---------------------------------------------------------------------------
+// In-memory state
+// ---------------------------------------------------------------------------
+const sessions = new Map(); // sessionId -> { id, claudeSessionId, abortCtrl, ... }
+const sseClients = new Set();
+
+function makeId(prefix) {
+    return prefix + "_" + crypto.randomUUID().replace(/-/g, "").slice(0, 20);
+}
+
+function broadcast(event) {
+    const data = "data: " + JSON.stringify(event) + "\n\n";
+    for (const res of sseClients) {
+        try {
+            res.write(data);
+        } catch {
+            sseClients.delete(res);
+        }
+    }
+}
+
+function buildContextText(pageContext) {
+    if (!pageContext) return "";
+
+    const parts = ["\n\n---\n[현재 화면 정보]"];
+    if (pageContext.url) parts.push(`URL: ${pageContext.url}`);
+    if (pageContext.path) parts.push(`경로: ${pageContext.path}`);
+    if (pageContext.breadcrumbs?.length > 0)
+        parts.push(`메뉴: ${pageContext.breadcrumbs.join(" > ")}`);
+    if (pageContext.activeMenu?.length > 0)
+        parts.push(`활성 메뉴: ${pageContext.activeMenu.join(", ")}`);
+
+    if (pageContext.pageContent) {
+        const c = pageContext.pageContent;
+        if (c.headers?.length > 0)
+            parts.push(`페이지 제목: ${c.headers.join(", ")}`);
+        if (c.tableColumns?.length > 0)
+            parts.push(`테이블 컬럼: ${c.tableColumns.join(", ")}`);
+        if (c.formFields?.length > 0)
+            parts.push(`폼 필드: ${c.formFields.join(", ")}`);
+        if (c.tabs?.length > 0) parts.push(`탭: ${c.tabs.join(", ")}`);
+        if (c.actions?.length > 0)
+            parts.push(`버튼/액션: ${c.actions.join(", ")}`);
+    }
+
+    if (pageContext.errors?.length > 0)
+        parts.push(`에러: ${pageContext.errors.join("; ")}`);
+
+    return parts.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Express app
+// ---------------------------------------------------------------------------
+const app = express();
+
+app.use(
+    cors({
+        origin(origin, callback) {
+            if (!origin || /^chrome-extension:\/\//.test(origin)) {
+                return callback(null, true);
+            }
+            const allowed = [
+                "https://cms-dev.slowfive.com",
+                "https://cms-staging.slowfive.com/",
+                "https://cms.slowfive.com/"
+            ];
+            if (allowed.includes(origin)) return callback(null, true);
+            callback(new Error("Not allowed by CORS"));
+        },
+        methods: ["POST", "GET"],
+    }),
+);
+
+app.use(express.json({limit: "5mb"}));
+
+// ---------------------------------------------------------------------------
+// POST /session — create session
+// ---------------------------------------------------------------------------
+app.post("/session", (_req, res) => {
+    const id = makeId("ses");
+    const session = {
+        id,
+        claudeSessionId: null,
+        messages: [],
+        createdAt: Date.now(),
+    };
+    sessions.set(id, session);
+
+    // DB에도 저장
+    db.createSession(id, null, null);
+
+    console.log(`[admin-helper] Session created: ${id}`);
+    res.json({sessionId: id});
+});
+
+// ---------------------------------------------------------------------------
+// POST /session/:id/message — send message (runs Claude Agent SDK)
+// ---------------------------------------------------------------------------
+app.post("/session/:sessionID/message", async (req, res) => {
+    let session = sessions.get(req.params.sessionID);
+    if (!session) {
+        // 메모리에 없으면 새로 생성 (서버 재시작 대응)
+        const id = req.params.sessionID;
+        session = {
+            id,
+            claudeSessionId: null,
+            messages: [],
+            createdAt: Date.now(),
+        };
+        sessions.set(id, session);
+        // DB에도 세션 row가 없으면 생성 (FK 제약 대응)
+        if (!db.getSession(id)) {
+            db.createSession(id, null, null);
+        }
+    }
+
+    const body = req.body || {};
+    const parts = body.parts || [];
+    const pageContext = body.pageContext || null;
+
+    const promptText = parts
+        .filter((p) => p.type === "text")
+        .map((p) => p.text)
+        .join("\n");
+
+    if (!promptText.trim()) {
+        return res.status(400).json({error: "Empty prompt"});
+    }
+
+    // 페이지 컨텍스트를 프롬프트에 추가
+    const fullPrompt = promptText + buildContextText(pageContext);
+
+    // DB에 사용자 메시지 저장
+    db.saveMessage(session.id, "user", promptText, pageContext, false);
+
+    // --- SDK query ---
+    const abortCtrl = new AbortController();
+    session.abortCtrl = abortCtrl;
+
+    res.on("close", () => {
+        if (!res.writableEnded && !abortCtrl.signal.aborted) {
+            abortCtrl.abort();
+        }
+    });
+
+    async function* promptStream() {
+        yield {
+            type: "user",
+            message: {role: "user", content: fullPrompt},
+        };
+    }
+
+    const messageID = makeId("msg");
+    let accumulatedText = "";
+    const timer = setTimeout(() => abortCtrl.abort(), TIMEOUT_MS);
+
+    // SSE: step-start
+    broadcast({
+        type: "message.part.updated",
+        properties: {
+            part: {
+                id: makeId("part"),
+                sessionID: session.id,
+                messageID,
+                type: "step-start",
+            },
+        },
+    });
+
+    try {
+        const queryOpts = {
+            model: DEFAULT_MODEL,
+            permissionMode: "bypassPermissions",
+            allowDangerouslySkipPermissions: true,
+            abortController: abortCtrl,
+            maxTurns: 1,
+            systemPrompt: SYSTEM_PROMPT,
+            disallowedTools: [
+                "Bash",
+                "Write",
+                "Edit",
+                "NotebookEdit",
+                "TodoWrite",
+            ],
+        };
+
+        // 이전 Claude 세션이 있으면 resume
+        if (session.claudeSessionId) {
+            queryOpts.resume = session.claudeSessionId;
+        }
+
+        const textPartId = makeId("part");
+
+        for await (const msg of query({
+            prompt: promptStream(),
+            options: queryOpts,
+        })) {
+            // Init: capture session_id
+            if (msg.type === "system" && msg.subtype === "init") {
+                session.claudeSessionId = msg.session_id;
+                continue;
+            }
+
+            // Streaming text deltas
+            if (msg.type === "stream_event") {
+                const evt = msg.event;
+                if (
+                    evt.type === "content_block_delta" &&
+                    evt.delta?.type === "text_delta"
+                ) {
+                    accumulatedText += evt.delta.text;
+                    broadcast({
+                        type: "message.part.updated",
+                        properties: {
+                            part: {
+                                id: textPartId,
+                                sessionID: session.id,
+                                messageID,
+                                type: "text",
+                                text: accumulatedText,
+                            },
+                        },
+                    });
+                }
+                continue;
+            }
+
+            // Complete assistant message
+            if (msg.type === "assistant") {
+                for (const block of msg.message?.content || []) {
+                    if (block.type === "text" && block.text && !accumulatedText) {
+                        accumulatedText = block.text;
+                    }
+                }
+                continue;
+            }
+
+            // Result
+            if (msg.type === "result") {
+                session.claudeSessionId = msg.session_id || session.claudeSessionId;
+                console.log(
+                    `[admin-helper] Query completed (turns: ${msg.num_turns}, cost: $${msg.total_cost_usd?.toFixed(4)})`,
+                );
+                break;
+            }
+        }
+    } catch (err) {
+        if (err.name === "AbortError") {
+            console.log(`[admin-helper] Query aborted for session ${session.id}`);
+        } else {
+            console.error(`[admin-helper] Query error: ${err.message}`);
+        }
+    } finally {
+        clearTimeout(timer);
+        delete session.abortCtrl;
+    }
+
+    // SSE: step-finish
+    broadcast({
+        type: "message.part.updated",
+        properties: {
+            part: {
+                id: makeId("part"),
+                sessionID: session.id,
+                messageID,
+                type: "step-finish",
+                reason: "stop",
+            },
+        },
+    });
+
+    // DB에 어시스턴트 응답 저장
+    if (accumulatedText) {
+        db.saveMessage(session.id, "assistant", accumulatedText, null, false);
+    }
+
+    // HTTP 응답
+    res.json({
+        text: accumulatedText,
+        sessionId: session.id,
+        parts: accumulatedText
+            ? [{type: "text", text: accumulatedText}]
+            : [],
+    });
+});
+
+// ---------------------------------------------------------------------------
+// GET /event — SSE event stream
+// ---------------------------------------------------------------------------
+app.get("/event", (req, res) => {
+    res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+    });
+
+    res.write(
+        "data: " +
+        JSON.stringify({type: "server.connected", properties: {}}) +
+        "\n\n",
+    );
+    sseClients.add(res);
+
+    const heartbeat = setInterval(() => {
+        try {
+            res.write(
+                "data: " +
+                JSON.stringify({type: "server.heartbeat", properties: {}}) +
+                "\n\n",
+            );
+        } catch {
+            clearInterval(heartbeat);
+            sseClients.delete(res);
+        }
+    }, 10000);
+
+    req.on("close", () => {
+        clearInterval(heartbeat);
+        sseClients.delete(res);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// POST /session/:id/abort — cancel running query
+// ---------------------------------------------------------------------------
+app.post("/session/:sessionID/abort", (req, res) => {
+    const session = sessions.get(req.params.sessionID);
+    if (session?.abortCtrl) {
+        session.abortCtrl.abort();
+    }
+    res.json(true);
+});
+
+// ---------------------------------------------------------------------------
+// 대화 이력 API
+// ---------------------------------------------------------------------------
+app.get("/api/sessions", (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const offset = parseInt(req.query.offset) || 0;
+    res.json(db.listSessions(limit, offset));
+});
+
+app.get("/api/sessions/:sessionId/messages", (req, res) => {
+    const session = db.getSession(req.params.sessionId);
+    if (!session) {
+        return res.status(404).json({error: "세션을 찾을 수 없습니다."});
+    }
+    res.json({session, messages: db.getMessages(req.params.sessionId)});
+});
+
+// Health check
+app.get("/health", (_req, res) => {
+    res.json({status: "ok", model: DEFAULT_MODEL});
+});
+
+// ---------------------------------------------------------------------------
+// Start
+// ---------------------------------------------------------------------------
+const server = http.createServer(app);
+server.listen(PORT, () => {
+    console.log(`[admin-helper] listening on http://localhost:${PORT}`);
+    console.log(`[admin-helper] model=${DEFAULT_MODEL}, timeout=${TIMEOUT_MS}ms`);
+});
