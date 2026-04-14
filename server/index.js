@@ -4,7 +4,6 @@ import cors from "cors";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import {query} from "@anthropic-ai/claude-agent-sdk";
 import * as db from "./db.js";
 
 // ---------------------------------------------------------------------------
@@ -24,6 +23,8 @@ const __dirname = path.dirname(new URL(import.meta.url).pathname);
 const PORT = parseInt(process.env.PORT, 10) || 4098;
 const DEFAULT_MODEL = process.env.MODEL || "claude-sonnet-4-5-20250929";
 const TIMEOUT_MS = parseInt(process.env.TIMEOUT, 10) || 300000; // 5분
+const CLAUDE_SERVE_URL = process.env.CLAUDE_SERVE_URL || "http://localhost:4097";
+const CLAUDE_SERVE_AUTH = process.env.CLAUDE_SERVE_AUTH_TOKEN || "";
 
 // Knowledge base 로드
 let knowledgeContent = "";
@@ -72,7 +73,7 @@ ${knowledgeContent ? "\n## 상세 사용 가이드\n" + knowledgeContent : ""}`;
 // ---------------------------------------------------------------------------
 // In-memory state
 // ---------------------------------------------------------------------------
-const sessions = new Map(); // sessionId -> { id, claudeSessionId, abortCtrl, ... }
+const sessions = new Map(); // sessionId -> { id, claudeServeSessionId, ... }
 const sseClients = new Set();
 
 function makeId(prefix) {
@@ -121,6 +122,110 @@ function buildContextText(pageContext) {
 }
 
 // ---------------------------------------------------------------------------
+// claude-serve HTTP client helpers
+// ---------------------------------------------------------------------------
+function claudeServeHeaders() {
+    const headers = {"Content-Type": "application/json"};
+    if (CLAUDE_SERVE_AUTH) {
+        headers["Authorization"] = `Bearer ${CLAUDE_SERVE_AUTH}`;
+    }
+    return headers;
+}
+
+async function createClaudeServeSession() {
+    const resp = await fetch(`${CLAUDE_SERVE_URL}/session`, {
+        method: "POST",
+        headers: claudeServeHeaders(),
+    });
+    if (!resp.ok) throw new Error(`claude-serve session create failed: ${resp.status}`);
+    return resp.json();
+}
+
+async function sendToClaudeServe(claudeServeSessionId, promptText, signal) {
+    return fetch(`${CLAUDE_SERVE_URL}/session/${claudeServeSessionId}/message`, {
+        method: "POST",
+        headers: claudeServeHeaders(),
+        signal,
+        body: JSON.stringify({
+            modelID: DEFAULT_MODEL,
+            maxTurns: 1,
+            systemPrompt: SYSTEM_PROMPT,
+            disallowedTools: ["Bash", "Write", "Edit", "NotebookEdit", "TodoWrite"],
+            thinking: {type: "enabled", budgetTokens: 5000},
+            parts: [{type: "text", text: promptText}],
+        }),
+    });
+}
+
+async function abortClaudeServeSession(claudeServeSessionId) {
+    try {
+        await fetch(`${CLAUDE_SERVE_URL}/session/${claudeServeSessionId}/abort`, {
+            method: "POST",
+            headers: claudeServeHeaders(),
+        });
+    } catch {
+        // ignore
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SSE proxy: claude-serve → 자체 SSE 클라이언트로 전달
+// ---------------------------------------------------------------------------
+let sseUpstream = null;
+
+function connectClaudeServeSSE() {
+    const url = CLAUDE_SERVE_AUTH
+        ? `${CLAUDE_SERVE_URL}/event?token=${CLAUDE_SERVE_AUTH}`
+        : `${CLAUDE_SERVE_URL}/event`;
+
+    console.log(`[admin-helper] Connecting to claude-serve SSE: ${CLAUDE_SERVE_URL}/event`);
+
+    fetch(url).then(async (resp) => {
+        if (!resp.ok) {
+            console.error(`[admin-helper] claude-serve SSE connection failed: ${resp.status}`);
+            setTimeout(connectClaudeServeSSE, 5000);
+            return;
+        }
+
+        sseUpstream = resp;
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        try {
+            while (true) {
+                const {done, value} = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, {stream: true});
+                const lines = buffer.split("\n");
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    if (!line.startsWith("data: ")) continue;
+                    try {
+                        const event = JSON.parse(line.slice(6));
+                        if (event.type === "server.heartbeat" || event.type === "server.connected") continue;
+                        broadcast(event);
+                    } catch {
+                        // skip malformed events
+                    }
+                }
+            }
+        } catch (err) {
+            console.error(`[admin-helper] claude-serve SSE read error: ${err.message}`);
+        }
+
+        // 연결 끊기면 재연결
+        console.log("[admin-helper] claude-serve SSE disconnected, reconnecting...");
+        setTimeout(connectClaudeServeSSE, 3000);
+    }).catch((err) => {
+        console.error(`[admin-helper] claude-serve SSE connect error: ${err.message}`);
+        setTimeout(connectClaudeServeSSE, 5000);
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Express app
 // ---------------------------------------------------------------------------
 const app = express();
@@ -148,41 +253,48 @@ app.use(express.json({limit: "5mb"}));
 // ---------------------------------------------------------------------------
 // POST /session — create session
 // ---------------------------------------------------------------------------
-app.post("/session", (_req, res) => {
-    const id = makeId("ses");
-    const session = {
-        id,
-        claudeSessionId: null,
-        messages: [],
-        createdAt: Date.now(),
-    };
-    sessions.set(id, session);
+app.post("/session", async (_req, res) => {
+    try {
+        const claudeServeSession = await createClaudeServeSession();
 
-    // DB에도 저장
-    db.createSession(id, null, null);
+        const id = makeId("ses");
+        const session = {
+            id,
+            claudeServeSessionId: claudeServeSession.id,
+            createdAt: Date.now(),
+        };
+        sessions.set(id, session);
+        db.createSession(id, null, null);
 
-    console.log(`[admin-helper] Session created: ${id}`);
-    res.json({sessionId: id});
+        console.log(`[admin-helper] Session created: ${id} → claude-serve: ${claudeServeSession.id}`);
+        res.json({sessionId: id});
+    } catch (err) {
+        console.error(`[admin-helper] Session create error: ${err.message}`);
+        res.status(502).json({error: "claude-serve 연결 실패"});
+    }
 });
 
 // ---------------------------------------------------------------------------
-// POST /session/:id/message — send message (runs Claude Agent SDK)
+// POST /session/:id/message — send message via claude-serve
 // ---------------------------------------------------------------------------
 app.post("/session/:sessionID/message", async (req, res) => {
     let session = sessions.get(req.params.sessionID);
     if (!session) {
-        // 메모리에 없으면 새로 생성 (서버 재시작 대응)
         const id = req.params.sessionID;
-        session = {
-            id,
-            claudeSessionId: null,
-            messages: [],
-            createdAt: Date.now(),
-        };
-        sessions.set(id, session);
-        // DB에도 세션 row가 없으면 생성 (FK 제약 대응)
-        if (!db.getSession(id)) {
-            db.createSession(id, null, null);
+        try {
+            const claudeServeSession = await createClaudeServeSession();
+            session = {
+                id,
+                claudeServeSessionId: claudeServeSession.id,
+                createdAt: Date.now(),
+            };
+            sessions.set(id, session);
+            if (!db.getSession(id)) {
+                db.createSession(id, null, null);
+            }
+        } catch (err) {
+            console.error(`[admin-helper] Session create error: ${err.message}`);
+            return res.status(502).json({error: "claude-serve 연결 실패"});
         }
     }
 
@@ -199,173 +311,60 @@ app.post("/session/:sessionID/message", async (req, res) => {
         return res.status(400).json({error: "Empty prompt"});
     }
 
-    // 페이지 컨텍스트를 프롬프트에 추가
     const fullPrompt = promptText + buildContextText(pageContext);
 
     // DB에 사용자 메시지 저장
     db.saveMessage(session.id, "user", promptText, pageContext, false);
 
-    // --- SDK query ---
+    // --- claude-serve로 요청 ---
     const abortCtrl = new AbortController();
     session.abortCtrl = abortCtrl;
+    const timer = setTimeout(() => abortCtrl.abort(), TIMEOUT_MS);
 
     res.on("close", () => {
         if (!res.writableEnded && !abortCtrl.signal.aborted) {
             abortCtrl.abort();
+            abortClaudeServeSession(session.claudeServeSessionId);
         }
     });
 
-    async function* promptStream() {
-        yield {
-            type: "user",
-            message: {role: "user", content: fullPrompt},
-        };
-    }
-
-    const messageID = makeId("msg");
     let accumulatedText = "";
-    let thinkingText = "";
-    const thinkingPartId = makeId("part");
-    const timer = setTimeout(() => abortCtrl.abort(), TIMEOUT_MS);
-
-    // SSE: step-start
-    broadcast({
-        type: "message.part.updated",
-        properties: {
-            part: {
-                id: makeId("part"),
-                sessionID: session.id,
-                messageID,
-                type: "step-start",
-            },
-        },
-    });
 
     try {
-        const queryOpts = {
-            model: DEFAULT_MODEL,
-            permissionMode: "bypassPermissions",
-            allowDangerouslySkipPermissions: true,
-            abortController: abortCtrl,
-            maxTurns: 1,
-            systemPrompt: SYSTEM_PROMPT,
-            disallowedTools: [
-                "Bash",
-                "Write",
-                "Edit",
-                "NotebookEdit",
-                "TodoWrite",
-            ],
-            thinking: {type: "enabled", budgetTokens: 5000},
-            includePartialMessages: true,
-        };
+        const resp = await sendToClaudeServe(
+            session.claudeServeSessionId,
+            fullPrompt,
+            abortCtrl.signal,
+        );
 
-        // 이전 Claude 세션이 있으면 resume
-        if (session.claudeSessionId) {
-            queryOpts.resume = session.claudeSessionId;
+        if (!resp.ok) {
+            const errBody = await resp.text();
+            console.error(`[admin-helper] claude-serve error: ${resp.status} ${errBody}`);
+            return res.status(502).json({error: "claude-serve 요청 실패"});
         }
 
-        const textPartId = makeId("part");
+        const result = await resp.json();
 
-        for await (const msg of query({
-            prompt: promptStream(),
-            options: queryOpts,
-        })) {
-            // Init: capture session_id
-            if (msg.type === "system" && msg.subtype === "init") {
-                session.claudeSessionId = msg.session_id;
-                continue;
-            }
-
-            // Streaming deltas
-            if (msg.type === "stream_event") {
-                const evt = msg.event;
-
-                // Thinking deltas
-                if (
-                    evt.type === "content_block_delta" &&
-                    evt.delta?.type === "thinking_delta"
-                ) {
-                    thinkingText += evt.delta.thinking;
-                    broadcast({
-                        type: "message.part.updated",
-                        properties: {
-                            part: {
-                                id: thinkingPartId,
-                                sessionID: session.id,
-                                messageID,
-                                type: "thinking",
-                                text: thinkingText,
-                            },
-                        },
-                    });
-                }
-
-                // Text deltas
-                if (
-                    evt.type === "content_block_delta" &&
-                    evt.delta?.type === "text_delta"
-                ) {
-                    accumulatedText += evt.delta.text;
-                    broadcast({
-                        type: "message.part.updated",
-                        properties: {
-                            part: {
-                                id: textPartId,
-                                sessionID: session.id,
-                                messageID,
-                                type: "text",
-                                text: accumulatedText,
-                            },
-                        },
-                    });
-                }
-                continue;
-            }
-
-            // Complete assistant message
-            if (msg.type === "assistant") {
-                for (const block of msg.message?.content || []) {
-                    if (block.type === "text" && block.text && !accumulatedText) {
-                        accumulatedText = block.text;
-                    }
-                }
-                continue;
-            }
-
-            // Result
-            if (msg.type === "result") {
-                session.claudeSessionId = msg.session_id || session.claudeSessionId;
-                console.log(
-                    `[admin-helper] Query completed (turns: ${msg.num_turns}, cost: $${msg.total_cost_usd?.toFixed(4)})`,
-                );
+        // claude-serve 응답에서 텍스트 추출
+        for (const part of result.parts || []) {
+            if (part.type === "text" && part.text) {
+                accumulatedText = part.text;
                 break;
             }
         }
+
+        console.log(`[admin-helper] Response received (${accumulatedText.length} chars)`);
     } catch (err) {
         if (err.name === "AbortError") {
             console.log(`[admin-helper] Query aborted for session ${session.id}`);
         } else {
             console.error(`[admin-helper] Query error: ${err.message}`);
+            return res.status(502).json({error: "claude-serve 통신 오류"});
         }
     } finally {
         clearTimeout(timer);
         delete session.abortCtrl;
     }
-
-    // SSE: step-finish
-    broadcast({
-        type: "message.part.updated",
-        properties: {
-            part: {
-                id: makeId("part"),
-                sessionID: session.id,
-                messageID,
-                type: "step-finish",
-                reason: "stop",
-            },
-        },
-    });
 
     // DB에 어시스턴트 응답 저장
     if (accumulatedText) {
@@ -375,7 +374,7 @@ app.post("/session/:sessionID/message", async (req, res) => {
     // HTTP 응답
     res.json({
         text: accumulatedText,
-        thinking: thinkingText || null,
+        thinking: null,
         sessionId: session.id,
         parts: accumulatedText
             ? [{type: "text", text: accumulatedText}]
@@ -427,6 +426,9 @@ app.post("/session/:sessionID/abort", (req, res) => {
     if (session?.abortCtrl) {
         session.abortCtrl.abort();
     }
+    if (session?.claudeServeSessionId) {
+        abortClaudeServeSession(session.claudeServeSessionId);
+    }
     res.json(true);
 });
 
@@ -449,7 +451,7 @@ app.get("/api/sessions/:sessionId/messages", (req, res) => {
 
 // Health check
 app.get("/health", (_req, res) => {
-    res.json({status: "ok", model: DEFAULT_MODEL});
+    res.json({status: "ok", model: DEFAULT_MODEL, claudeServe: CLAUDE_SERVE_URL});
 });
 
 // ---------------------------------------------------------------------------
@@ -458,5 +460,16 @@ app.get("/health", (_req, res) => {
 const server = http.createServer(app);
 server.listen(PORT, () => {
     console.log(`[admin-helper] listening on http://localhost:${PORT}`);
-    console.log(`[admin-helper] model=${DEFAULT_MODEL}, timeout=${TIMEOUT_MS}ms`);
+    console.log(`[admin-helper] model=${DEFAULT_MODEL}, claude-serve=${CLAUDE_SERVE_URL}`);
+
+    // claude-serve SSE 프록시 연결
+    connectClaudeServeSSE();
+
+    // 7일 지난 세션 자동 삭제 (서버 시작 시 + 매 24시간)
+    const cleanup = () => {
+        const deleted = db.cleanupExpiredSessions();
+        if (deleted > 0) console.log(`[admin-helper] Cleaned up ${deleted} expired sessions`);
+    };
+    cleanup();
+    setInterval(cleanup, 24 * 60 * 60 * 1000);
 });

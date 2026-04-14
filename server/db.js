@@ -67,6 +67,9 @@ const stmts = {
     'SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC',
   ),
   countSessions: db.prepare('SELECT COUNT(*) as count FROM sessions'),
+  deleteExpiredSessions: db.prepare(
+    "DELETE FROM sessions WHERE updated_at < datetime('now', '-7 days')",
+  ),
 };
 
 // ============================================================
@@ -101,6 +104,11 @@ export function listSessions(limit = 50, offset = 0) {
 
 export function getMessages(sessionId) {
   return stmts.getMessages.all(sessionId);
+}
+
+export function cleanupExpiredSessions() {
+  const result = stmts.deleteExpiredSessions.run();
+  return result.changes;
 }
 
 export { db };

@@ -1,0 +1,16 @@
+{
+  "name": "claude-serve",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Claude Agent SDK HTTP server — REST + SSE streaming API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.87",
+    "express": "^4.21.0",
+    "zod": "^3.24.0"
+  }
+}

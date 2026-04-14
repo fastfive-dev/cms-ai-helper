@@ -3,4 +3,5 @@ host/native-host-wrapper.sh
 .env
 *.log
 .DS_Store
+.idea/
 server/data/

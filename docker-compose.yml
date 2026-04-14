@@ -1,0 +1,26 @@
+services:
+  claude-serve:
+    build: ./claude-serve
+    ports:
+      - "4097:4097"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CLAUDE_SERVE_PORT=4097
+    restart: unless-stopped
+
+  server:
+    build: ./server
+    ports:
+      - "4098:4098"
+    environment:
+      - PORT=4098
+      - CLAUDE_SERVE_URL=http://claude-serve:4097
+      - DB_PATH=/app/data/admin-helper.db
+    volumes:
+      - server-data:/app/data
+    depends_on:
+      - claude-serve
+    restart: unless-stopped
+
+volumes:
+  server-data:
