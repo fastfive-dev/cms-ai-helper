@@ -16,6 +16,14 @@
         <span class="context-path" id="contextPath">감지 중...</span>
       </div>
       <div class="header-actions">
+        <button id="themeToggle" class="theme-toggle" title="테마 전환">
+          <svg class="icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+          <svg class="icon-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+          </svg>
+        </button>
         <button id="clearBtn" class="btn-new-chat" title="대화 초기화">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="12" y1="5" x2="12" y2="19"/>
@@ -30,10 +38,10 @@
     <div class="messages" id="messages">
       <!-- Welcome screen (replaced on first message) -->
       <div class="welcome" id="welcomeScreen">
-        <p>현재 보고 있는 CMS 화면에 대해<br>궁금한 점을 물어보세요.</p>
+        <p>AI에게 현재 보고 있는 CMS 화면에 대해<br>궁금한 점을 물어보세요.</p>
         <div class="welcome-hints">
-          <button class="hint-chip" data-hint="이 화면 활용 예시 보여줘">이 화면 활용 예시 보여줘</button>
           <button class="hint-chip" data-hint="이 화면에서 뭘 할 수 있어?">이 화면에서 뭘 할 수 있어?</button>
+          <button class="hint-chip" data-hint="이 화면의 각 항목이 무슨 뜻이야?">이 화면의 각 항목이 무슨 뜻이야?</button>
           <button class="hint-chip" data-hint="관련된 다른 메뉴가 있어?">관련된 다른 메뉴가 있어?</button>
         </div>
       </div>

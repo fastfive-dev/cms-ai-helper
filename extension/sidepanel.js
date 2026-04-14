@@ -9,7 +9,50 @@ const elements = {
   contextPath: document.getElementById('contextPath'),
   contextDot: document.getElementById('contextDot'),
   welcomeScreen: document.getElementById('welcomeScreen'),
+  themeToggle: document.getElementById('themeToggle'),
 };
+
+// ============================================================
+// --- Theme ---
+// ============================================================
+
+function getSystemTheme() {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function applyTheme(theme) {
+  if (theme === 'system') {
+    document.documentElement.removeAttribute('data-theme');
+  } else {
+    document.documentElement.setAttribute('data-theme', theme);
+  }
+}
+
+function initTheme() {
+  const saved = localStorage.getItem('theme');
+  if (saved) {
+    applyTheme(saved);
+  }
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme');
+  const systemTheme = getSystemTheme();
+
+  let next;
+  if (!current) {
+    // Currently following system → switch to opposite
+    next = systemTheme === 'dark' ? 'light' : 'dark';
+  } else {
+    next = current === 'dark' ? 'light' : 'dark';
+  }
+
+  applyTheme(next);
+  localStorage.setItem('theme', next);
+}
+
+initTheme();
+elements.themeToggle.addEventListener('click', toggleTheme);
 
 let conversationHistory = [];
 let isLoading = false;
@@ -53,15 +96,23 @@ function connectSSE() {
   }
 }
 
+let pendingStreamRender = false;
+
 function showStreamingText(text) {
-  const loadingMsg = document.getElementById('loadingMessage');
-  if (!loadingMsg) return;
+  if (pendingStreamRender) return;
+  pendingStreamRender = true;
 
-  const content = loadingMsg.querySelector('.message-content');
-  if (!content) return;
+  requestAnimationFrame(() => {
+    pendingStreamRender = false;
+    const loadingMsg = document.getElementById('loadingMessage');
+    if (!loadingMsg) return;
 
-  content.innerHTML = renderMarkdown(text) + '<span class="streaming-cursor"></span>';
-  scrollToBottom();
+    const content = loadingMsg.querySelector('.message-content');
+    if (!content) return;
+
+    content.innerHTML = renderMarkdown(streamingText) + '<span class="streaming-cursor"></span>';
+    scrollToBottom();
+  });
 }
 
 connectSSE();
@@ -510,10 +561,10 @@ elements.clearBtn.addEventListener('click', () => {
   welcome.className = 'welcome';
   welcome.id = 'welcomeScreen';
   welcome.innerHTML = `
-    <p>현재 보고 있는 CMS 화면에 대해<br>궁금한 점을 물어보세요.</p>
+    <p>AI에게 현재 보고 있는 CMS 화면에 대해<br>궁금한 점을 물어보세요.</p>
     <div class="welcome-hints">
-      <button class="hint-chip" data-hint="이 화면 활용 예시 보여줘">이 화면 활용 예시 보여줘</button>
       <button class="hint-chip" data-hint="이 화면에서 뭘 할 수 있어?">이 화면에서 뭘 할 수 있어?</button>
+      <button class="hint-chip" data-hint="이 화면의 각 항목이 무슨 뜻이야?">이 화면의 각 항목이 무슨 뜻이야?</button>
       <button class="hint-chip" data-hint="관련된 다른 메뉴가 있어?">관련된 다른 메뉴가 있어?</button>
     </div>
   `;

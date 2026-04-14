@@ -256,7 +256,7 @@ app.post("/session/:sessionID/message", async (req, res) => {
                 "NotebookEdit",
                 "TodoWrite",
             ],
-            thinking: {type: "enabled", budgetTokens: 10000},
+            thinking: {type: "enabled", budgetTokens: 5000},
             includePartialMessages: true,
         };
 

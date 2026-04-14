@@ -342,27 +342,9 @@ async function handleChatRequest(payload) {
   const tabId = tab?.id || 'default';
   const sessionId = await getOrCreateSession(tabId);
 
-  // 사용자 메시지 + 페이지 컨텍스트 조합
+  // 사용자 메시지 (페이지 컨텍스트는 서버의 buildContextText에서 처리)
   const lastMessage = messages[messages.length - 1];
-  let text = lastMessage.content;
-
-  if (pageContext) {
-    const parts = ['\n\n---\n[현재 Admin 화면 정보]'];
-    if (pageContext.path) parts.push(`경로: ${pageContext.path}`);
-    if (pageContext.breadcrumbs?.length > 0)
-      parts.push(`메뉴: ${pageContext.breadcrumbs.join(' > ')}`);
-    if (pageContext.pageContent) {
-      const c = pageContext.pageContent;
-      if (c.headers?.length > 0) parts.push(`페이지 제목: ${c.headers.join(', ')}`);
-      if (c.tableColumns?.length > 0) parts.push(`테이블 컬럼: ${c.tableColumns.join(', ')}`);
-      if (c.formFields?.length > 0) parts.push(`폼 필드: ${c.formFields.join(', ')}`);
-      if (c.tabs?.length > 0) parts.push(`탭: ${c.tabs.join(', ')}`);
-      if (c.actions?.length > 0) parts.push(`버튼: ${c.actions.join(', ')}`);
-    }
-    if (pageContext.errors?.length > 0)
-      parts.push(`에러: ${pageContext.errors.join('; ')}`);
-    text += parts.join('\n');
-  }
+  const text = lastMessage.content;
 
   // 메시지 parts 구성
   const msgParts = [{ type: 'text', text }];
