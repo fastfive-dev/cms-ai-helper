@@ -81,7 +81,7 @@ let streamingText = '';
 // --- SSE (Server-Sent Events) ---
 // ============================================================
 
-let SERVER_URL = 'https://expenses-cascade-surplus.ngrok-free.dev';
+let SERVER_URL = 'http://pd-mac-macmini.tailcd5e82.ts.net:4098';
 let eventSource = null;
 
 // Load server URL from storage
