@@ -395,7 +395,7 @@ function renderMarkdown(text) {
       return row.split('|').slice(1, -1).map((cell) => { return cell.trim(); });
     };
 
-    const isSeparator = /^\|[\s\-:]+\|$/.test(rows[1]);
+    const isSeparator = /^\|[\s\-:|]+$/.test(rows[1]);
     let tableHtml = '<table>';
 
     if (isSeparator && rows.length >= 3) {
@@ -425,6 +425,9 @@ function renderMarkdown(text) {
     return tableHtml;
   });
 
+  // Horizontal rule (---)
+  html = html.replace(/^---$/gm, '<hr>');
+
   // Bold (**)
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
@@ -447,8 +450,9 @@ function renderMarkdown(text) {
   html = html.replace(/\n/g, '<br>');
 
   // Clean up extra <br> around block elements
-  html = html.replace(/<br><(ul|ol|pre|li|table|thead|tbody|tr|th|td)/g, '<$1');
+  html = html.replace(/<br><(ul|ol|pre|li|table|thead|tbody|tr|th|td|hr)/g, '<$1');
   html = html.replace(/<\/(ul|ol|pre|li|table|thead|tbody|tr|th|td)><br>/g, '</$1>');
+  html = html.replace(/<hr><br>/g, '<hr>');
 
   return html;
 }

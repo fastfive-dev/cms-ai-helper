@@ -296,6 +296,13 @@ body {
   text-decoration: underline;
 }
 
+.message.assistant .message-content hr {
+  border: none;
+  height: 1px;
+  background: var(--border-standard);
+  margin: 12px 0;
+}
+
 /* ========== Welcome Message ========== */
 .welcome {
   display: flex;
