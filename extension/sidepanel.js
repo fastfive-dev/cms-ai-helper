@@ -10,6 +10,7 @@ const elements = {
   contextDot: document.getElementById('contextDot'),
   welcomeScreen: document.getElementById('welcomeScreen'),
   themeToggle: document.getElementById('themeToggle'),
+  guideResetBtn: document.getElementById('guideResetBtn'),
 };
 
 // ============================================================
@@ -53,6 +54,23 @@ function toggleTheme() {
 
 initTheme();
 elements.themeToggle.addEventListener('click', toggleTheme);
+
+// ============================================================
+// --- Guide Reset ---
+// ============================================================
+
+elements.guideResetBtn.addEventListener('click', () => {
+  chrome.storage.local.remove(
+    ['guide_onboarding_seen', 'guide_pages_seen', 'guide_disabled'],
+    () => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]?.id) {
+          chrome.tabs.reload(tabs[0].id);
+        }
+      });
+    }
+  );
+});
 
 let conversationHistory = [];
 let isLoading = false;

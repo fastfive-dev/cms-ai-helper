@@ -32,9 +32,12 @@
         "https://admin.fastfive.co.kr/*",
         "https://admin.dev.fastfive.co.kr/*",
         "https://cms-dev.slowfive.com/*",
+        "https://cms-staging.slowfive.com/*",
+        "https://cms.slowfive.com/*",
         "http://localhost/*"
       ],
-      "js": ["content.js"],
+      "js": ["guide-data.js", "content.js", "guide.js"],
+      "css": ["guide.css"],
       "run_at": "document_idle"
     }
   ],
@@ -51,6 +54,8 @@
     "https://admin.fastfive.co.kr/*",
     "https://admin.dev.fastfive.co.kr/*",
     "https://cms-dev.slowfive.com/*",
+    "https://cms-staging.slowfive.com/*",
+    "https://cms.slowfive.com/*",
     "http://localhost/*"
   ],
   "web_accessible_resources": [
