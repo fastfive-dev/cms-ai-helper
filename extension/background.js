@@ -9,20 +9,6 @@ self.addEventListener("unhandledrejection", (event) => {
 // --- Configuration ---
 // ============================================================
 
-const AUTH_CONFIG = {
-  // true: 로그인 없이 바로 사용 (개발/테스트용)
-  // false: Google 로그인 + 도메인 검증 필요 (프로덕션용)
-  skipAuth: true,
-
-  allowedDomains: ['fastfive.co.kr'],
-  storageKeys: {
-    authState: 'auth_state',
-    userInfo: 'auth_user_info',
-    tokenTimestamp: 'auth_token_timestamp',
-  },
-  userinfoEndpoint: 'https://www.googleapis.com/oauth2/v2/userinfo',
-};
-
 const DEFAULT_SERVER_URL = 'http://pd-mac-macmini.tailcd5e82.ts.net:4098';
 
 const API_CONFIG = {
