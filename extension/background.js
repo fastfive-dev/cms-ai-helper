@@ -36,16 +36,6 @@ const ADMIN_URL_PATTERNS = [
   'localhost',
 ];
 
-const SYSTEM_CONTEXT = `당신은 FASTFIVE CMS 사이트 사용 도우미입니다.
-사용자가 현재 보고 있는 CMS 화면 정보가 함께 제공됩니다.
-화면 정보를 참고하여 해당 화면의 사용 방법을 친절하고 구체적으로 안내해주세요.
-
-## 응답 규칙
-- 사용자가 보고 있는 화면 기준으로 답변하세요
-- 단계별 안내 시 번호를 매겨주세요
-- 관련 메뉴가 있으면 함께 안내하세요
-- 한국어로 답변하세요`;
-
 // ============================================================
 // --- Authentication ---
 // ============================================================
@@ -340,15 +330,6 @@ async function getOrCreateSession(tabId) {
     throw new Error('세션 ID를 받지 못했습니다.');
   }
 
-  // 세션 생성 후 시스템 컨텍스트를 첫 메시지로 전송
-  await fetch(`${API_CONFIG.baseUrl}/session/${sessionId}/message`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      parts: [{ type: 'text', text: SYSTEM_CONTEXT }],
-    }),
-  });
-
   API_CONFIG.sessions.set(tabId, sessionId);
   return sessionId;
 }
@@ -499,6 +480,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     getActiveAdminTab().then((tab) => {
       const tabId = tab?.id || 'default';
       API_CONFIG.sessions.delete(tabId);
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
+  // Abort request (from side panel)
+  if (message.type === 'abort') {
+    getActiveAdminTab().then(async (tab) => {
+      const tabId = tab?.id || 'default';
+      const sessionId = API_CONFIG.sessions.get(tabId);
+      if (sessionId) {
+        try {
+          await fetch(`${API_CONFIG.baseUrl}/session/${sessionId}/abort`, { method: 'POST' });
+        } catch {
+          // best effort
+        }
+      }
       sendResponse({ success: true });
     });
     return true;

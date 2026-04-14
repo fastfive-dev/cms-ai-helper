@@ -14,9 +14,6 @@ const elements = {
 let conversationHistory = [];
 let isLoading = false;
 let currentPageContext = null;
-let lastThinkingText = '';
-let prevThinkingLen = 0;
-let currentSentence = '';
 let streamingText = '';
 
 // ============================================================
@@ -37,10 +34,6 @@ function connectSSE() {
         const data = JSON.parse(e.data);
         if (data.type === 'message.part.updated') {
           const part = data.properties?.part;
-          if (part?.type === 'thinking') {
-            lastThinkingText = part.text || '';
-            updateThinkingSentence(lastThinkingText);
-          }
           if (part?.type === 'text') {
             streamingText = part.text || '';
             showStreamingText(streamingText);
@@ -57,50 +50,6 @@ function connectSSE() {
     };
   } catch {
     setTimeout(connectSSE, 5000);
-  }
-}
-
-function updateThinkingSentence(fullText) {
-  // 새로 추가된 부분만 추출
-  const newPart = fullText.slice(prevThinkingLen);
-  prevThinkingLen = fullText.length;
-
-  for (const ch of newPart) {
-    if (ch === '\n') {
-      // 줄바꿈 → 현재 문장 완료, 리셋
-      currentSentence = '';
-    } else {
-      currentSentence += ch;
-    }
-  }
-
-  showThinkingInLoadingMessage(currentSentence.trim());
-}
-
-function showThinkingInLoadingMessage(text) {
-  const loadingMsg = document.getElementById('loadingMessage');
-  if (!loadingMsg) return;
-
-  const content = loadingMsg.querySelector('.message-content');
-  if (!content) return;
-
-  // 첫 thinking 이벤트: 점 세 개를 thinking 블록으로 교체
-  if (!content.querySelector('.thinking-live')) {
-    content.innerHTML = `
-      <div class="thinking-live">
-        <div class="thinking-header">
-          <span class="thinking-indicator"></span>
-          <span class="thinking-label">사고 중...</span>
-        </div>
-        <div class="thinking-text"></div>
-      </div>
-    `;
-  }
-
-  const thinkingEl = content.querySelector('.thinking-text');
-  if (thinkingEl) {
-    thinkingEl.textContent = text;
-    scrollToBottom();
   }
 }
 
@@ -179,24 +128,59 @@ async function fetchPageContext() {
   }
 }
 
+const ALLOWED_DOMAINS = [
+  'cms-dev.slowfive.com',
+  'cms-staging.slowfive.com',
+  'cms.slowfive.com',
+];
+
+function isAllowedDomain(url) {
+  try {
+    const hostname = new URL(url).hostname;
+    return ALLOWED_DOMAINS.includes(hostname);
+  } catch {
+    return false;
+  }
+}
+
+function setInputEnabled(enabled) {
+  const inputArea = document.querySelector('.input-area');
+  document.querySelectorAll('.hint-chip').forEach((chip) => {
+    chip.disabled = !enabled;
+  });
+  if (enabled) {
+    inputArea.classList.remove('disabled');
+    elements.userInput.disabled = false;
+    elements.userInput.placeholder = '질문을 입력하세요...';
+  } else {
+    inputArea.classList.add('disabled');
+    elements.userInput.disabled = true;
+    elements.userInput.placeholder = 'CMS 페이지에서 사용할 수 있습니다';
+  }
+  updateSendButton();
+}
+
 async function updateContextBar() {
   try {
     const context = await fetchPageContext();
     currentPageContext = context;
 
-    if (context && context.path) {
+    if (context && context.url && isAllowedDomain(context.url)) {
       elements.contextDot.classList.remove('disconnected');
       elements.contextPath.textContent = context.path;
       if (context.breadcrumbs && context.breadcrumbs.length > 0) {
         elements.contextPath.textContent = context.breadcrumbs.join(' > ');
       }
+      setInputEnabled(true);
     } else {
       elements.contextDot.classList.add('disconnected');
       elements.contextPath.textContent = 'CMS 페이지에 접속해주세요';
+      setInputEnabled(false);
     }
   } catch {
     elements.contextDot.classList.add('disconnected');
     elements.contextPath.textContent = 'CMS 페이지에 접속해주세요';
+    setInputEnabled(false);
   }
 }
 
@@ -230,7 +214,7 @@ document.querySelectorAll('.hint-chip').forEach((chip) => {
 // --- Chat ---
 // ============================================================
 
-function addMessage(role, content, thinkingText) {
+function addMessage(role, content) {
   removeWelcomeScreen();
 
   const messageDiv = document.createElement('div');
@@ -240,12 +224,7 @@ function addMessage(role, content, thinkingText) {
   contentDiv.className = 'message-content';
 
   if (role === 'assistant') {
-    let html = '';
-    if (thinkingText) {
-      html += `<details class="thinking-block"><summary>사고 과정</summary><div class="thinking-content">${escapeHtml(thinkingText)}</div></details>`;
-    }
-    html += renderMarkdown(content);
-    contentDiv.innerHTML = html;
+    contentDiv.innerHTML = renderMarkdown(content);
   } else {
     contentDiv.textContent = content;
   }
@@ -280,6 +259,24 @@ function scrollToBottom() {
   elements.messages.scrollTop = elements.messages.scrollHeight;
 }
 
+function abortMessage() {
+  chrome.runtime.sendMessage({ type: 'abort' });
+
+  // 스트리밍 중이었으면 현재까지의 텍스트를 최종 메시지로 변환
+  const loadingMsg = document.getElementById('loadingMessage');
+  if (loadingMsg && streamingText) {
+    loadingMsg.removeAttribute('id');
+    const content = loadingMsg.querySelector('.message-content');
+    content.innerHTML = renderMarkdown(streamingText);
+    conversationHistory.push({ role: 'assistant', content: streamingText });
+  } else {
+    removeLoadingMessage();
+  }
+
+  isLoading = false;
+  updateSendButton();
+}
+
 async function sendMessage() {
   const text = elements.userInput.value.trim();
   if (!text || isLoading) {
@@ -287,13 +284,10 @@ async function sendMessage() {
   }
 
   isLoading = true;
-  elements.sendBtn.disabled = true;
   elements.userInput.value = '';
+  updateSendButton();
   autoResize();
 
-  lastThinkingText = '';
-  prevThinkingLen = 0;
-  currentSentence = '';
   streamingText = '';
 
   addMessage('user', text);
@@ -329,22 +323,16 @@ async function sendMessage() {
     });
 
     const assistantContent = response.content || response.text || '응답을 받을 수 없습니다.';
-    const thinkingContent = response.thinking || lastThinkingText || '';
 
     // 스트리밍 중이었으면 기존 메시지를 in-place로 최종 변환 (깜빡임 방지)
     const loadingMsg = document.getElementById('loadingMessage');
     if (loadingMsg && streamingText) {
       loadingMsg.removeAttribute('id');
       const content = loadingMsg.querySelector('.message-content');
-      let html = '';
-      if (thinkingContent) {
-        html += `<details class="thinking-block"><summary>사고 과정</summary><div class="thinking-content">${escapeHtml(thinkingContent)}</div></details>`;
-      }
-      html += renderMarkdown(assistantContent);
-      content.innerHTML = html;
+      content.innerHTML = renderMarkdown(assistantContent);
     } else {
       removeLoadingMessage();
-      addMessage('assistant', assistantContent, thinkingContent);
+      addMessage('assistant', assistantContent);
     }
     conversationHistory.push({ role: 'assistant', content: assistantContent });
   } catch (error) {
@@ -425,6 +413,10 @@ function renderMarkdown(text) {
     return tableHtml;
   });
 
+  // Blockquote (> text)
+  html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+  html = html.replace(/<\/blockquote>\n<blockquote>/g, '<br>');
+
   // Horizontal rule (---)
   html = html.replace(/^---$/gm, '<hr>');
 
@@ -450,8 +442,8 @@ function renderMarkdown(text) {
   html = html.replace(/\n/g, '<br>');
 
   // Clean up extra <br> around block elements
-  html = html.replace(/<br><(ul|ol|pre|li|table|thead|tbody|tr|th|td|hr)/g, '<$1');
-  html = html.replace(/<\/(ul|ol|pre|li|table|thead|tbody|tr|th|td)><br>/g, '</$1>');
+  html = html.replace(/<br><(ul|ol|pre|li|table|thead|tbody|tr|th|td|hr|blockquote)/g, '<$1');
+  html = html.replace(/<\/(ul|ol|pre|li|table|thead|tbody|tr|th|td|blockquote)><br>/g, '</$1>');
   html = html.replace(/<hr><br>/g, '<hr>');
 
   return html;
@@ -473,8 +465,19 @@ function autoResize() {
   textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
 }
 
+const sendIcon = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
+const stopIcon = '<span class="stop-icon"></span>';
+
 function updateSendButton() {
-  elements.sendBtn.disabled = !elements.userInput.value.trim() || isLoading;
+  if (isLoading) {
+    elements.sendBtn.disabled = false;
+    elements.sendBtn.classList.add('stop');
+    elements.sendBtn.innerHTML = stopIcon;
+  } else {
+    elements.sendBtn.classList.remove('stop');
+    elements.sendBtn.innerHTML = sendIcon;
+    elements.sendBtn.disabled = !elements.userInput.value.trim();
+  }
 }
 
 elements.userInput.addEventListener('input', () => {
@@ -489,7 +492,13 @@ elements.userInput.addEventListener('keydown', (event) => {
   }
 });
 
-elements.sendBtn.addEventListener('click', sendMessage);
+elements.sendBtn.addEventListener('click', () => {
+  if (isLoading) {
+    abortMessage();
+  } else {
+    sendMessage();
+  }
+});
 
 elements.clearBtn.addEventListener('click', () => {
   conversationHistory = [];
@@ -503,9 +512,9 @@ elements.clearBtn.addEventListener('click', () => {
   welcome.innerHTML = `
     <p>현재 보고 있는 CMS 화면에 대해<br>궁금한 점을 물어보세요.</p>
     <div class="welcome-hints">
+      <button class="hint-chip" data-hint="이 화면 활용 예시 보여줘">이 화면 활용 예시 보여줘</button>
       <button class="hint-chip" data-hint="이 화면에서 뭘 할 수 있어?">이 화면에서 뭘 할 수 있어?</button>
-      <button class="hint-chip" data-hint="각 필드가 무슨 뜻이야?">각 필드가 무슨 뜻이야?</button>
-      <button class="hint-chip" data-hint="이 화면의 사용 순서를 알려줘">이 화면의 사용 순서를 알려줘</button>
+      <button class="hint-chip" data-hint="관련된 다른 메뉴가 있어?">관련된 다른 메뉴가 있어?</button>
     </div>
   `;
   elements.messages.appendChild(welcome);

@@ -44,19 +44,20 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
+  padding: 8px 12px;
   background: var(--surface-card);
   border-bottom: 1px solid var(--border-standard);
   flex-shrink: 0;
+  gap: 8px;
 }
 
-.header-title {
+.header-context {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-strong);
+  gap: 6px;
+  font-size: 11px;
+  min-width: 0;
+  flex: 1;
 }
 
 .header-icon {
@@ -131,18 +132,7 @@ body {
   flex-shrink: 0;
 }
 
-/* ========== Context Bar ========== */
-.context-bar {
-  padding: 7px 14px;
-  background: var(--primary-subtle);
-  border-bottom: 1px solid #d6e3ff;
-  font-size: 11px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
+/* ========== Context (in header) ========== */
 .context-dot {
   width: 6px;
   height: 6px;
@@ -287,6 +277,15 @@ body {
   background: var(--primary-subtle);
 }
 
+.message.assistant .message-content blockquote {
+  border-left: 3px solid var(--primary);
+  background: var(--primary-subtle);
+  padding: 8px 12px;
+  margin: 8px 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--text-secondary);
+}
+
 .message.assistant .message-content a {
   color: var(--primary);
   text-decoration: none;
@@ -363,10 +362,15 @@ body {
   transition: all 0.15s;
 }
 
-.hint-chip:hover {
+.hint-chip:hover:not(:disabled) {
   border-color: var(--primary);
   color: var(--primary);
   background: var(--primary-subtle);
+}
+
+.hint-chip:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
 }
 
 /* ========== Loading Dots ========== */
@@ -390,75 +394,6 @@ body {
 @keyframes bounce {
   0%, 80%, 100% { transform: scale(0.6); opacity: 0.3; }
   40% { transform: scale(1); opacity: 1; }
-}
-
-/* ========== Thinking (실시간) ========== */
-.thinking-live {
-  padding: 2px 0;
-}
-
-.thinking-live .thinking-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-neutral);
-}
-
-.thinking-live .thinking-indicator {
-  width: 6px;
-  height: 6px;
-  background: var(--primary);
-  border-radius: 50%;
-  animation: pulse 1.5s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 1; }
-}
-
-.thinking-live .thinking-text {
-  font-size: 11px;
-  color: var(--text-secondary);
-  line-height: 1.5;
-  margin-top: 6px;
-  min-height: 1.5em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: opacity 0.15s ease;
-}
-
-/* ========== Thinking Block (응답 내 접기/펼치기) ========== */
-.thinking-block {
-  border-left: 2px solid var(--border-hover);
-  margin-bottom: 10px;
-  padding-left: 10px;
-  font-size: 12px;
-  color: var(--text-neutral);
-}
-
-.thinking-block summary {
-  cursor: pointer;
-  padding: 4px 0;
-  user-select: none;
-  font-size: 12px;
-  color: var(--text-neutral);
-}
-
-.thinking-block summary:hover {
-  color: var(--text-secondary);
-}
-
-.thinking-block .thinking-content {
-  padding: 6px 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 200px;
-  overflow-y: auto;
-  color: var(--text-secondary);
-  line-height: 1.5;
 }
 
 /* ========== Streaming Cursor ========== */
@@ -518,6 +453,7 @@ textarea {
   letter-spacing: -0.2px;
   resize: none;
   outline: none;
+  min-height: 24px;
   max-height: 120px;
   scrollbar-width: thin;
 }
@@ -531,8 +467,8 @@ textarea::placeholder {
   border: none;
   color: #ffffff;
   cursor: pointer;
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
@@ -548,6 +484,30 @@ textarea::placeholder {
 .send-btn:disabled {
   background: var(--border-hover);
   color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+.send-btn.stop {
+  background: var(--text-neutral);
+}
+
+.send-btn.stop:hover {
+  background: var(--text-secondary);
+}
+
+.stop-icon {
+  width: 10px;
+  height: 10px;
+  background: #ffffff;
+  border-radius: 2px;
+}
+
+.input-area.disabled .input-wrapper {
+  background: var(--border-standard);
+  border-color: var(--border-standard);
+}
+
+.input-area.disabled textarea {
   cursor: not-allowed;
 }
 
