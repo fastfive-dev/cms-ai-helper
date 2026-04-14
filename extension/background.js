@@ -9,21 +9,7 @@ self.addEventListener("unhandledrejection", (event) => {
 // --- Configuration ---
 // ============================================================
 
-const AUTH_CONFIG = {
-  // true: 로그인 없이 바로 사용 (개발/테스트용)
-  // false: Google 로그인 + 도메인 검증 필요 (프로덕션용)
-  skipAuth: true,
-
-  allowedDomains: ['fastfive.co.kr'],
-  storageKeys: {
-    authState: 'auth_state',
-    userInfo: 'auth_user_info',
-    tokenTimestamp: 'auth_token_timestamp',
-  },
-  userinfoEndpoint: 'https://www.googleapis.com/oauth2/v2/userinfo',
-};
-
-const DEFAULT_SERVER_URL = 'http://localhost:4098';
+const DEFAULT_SERVER_URL = 'https://expenses-cascade-surplus.ngrok-free.dev';
 
 const API_CONFIG = {
   baseUrl: DEFAULT_SERVER_URL,
@@ -50,162 +36,6 @@ const ADMIN_URL_PATTERNS = [
   'cms-dev.slowfive.com',
   'localhost',
 ];
-
-// ============================================================
-// --- Authentication ---
-// ============================================================
-
-let isAuthenticated = false;
-let currentUser = null;
-
-function isAllowedDomain(email) {
-  if (!email || typeof email !== 'string') {
-    return false;
-  }
-  const domain = email.split('@')[1];
-  if (!domain) {
-    return false;
-  }
-  return AUTH_CONFIG.allowedDomains.includes(domain.toLowerCase());
-}
-
-async function restoreAuthState() {
-  if (AUTH_CONFIG.skipAuth) {
-    isAuthenticated = true;
-    currentUser = { email: 'dev@fastfive.co.kr', name: 'Dev Mode' };
-    return true;
-  }
-
-  try {
-    const data = await chrome.storage.local.get([
-      AUTH_CONFIG.storageKeys.authState,
-      AUTH_CONFIG.storageKeys.userInfo,
-    ]);
-
-    const authState = data[AUTH_CONFIG.storageKeys.authState];
-    const userInfo = data[AUTH_CONFIG.storageKeys.userInfo];
-
-    if (authState !== 'authenticated' || !userInfo || !userInfo.email) {
-      isAuthenticated = false;
-      currentUser = null;
-      return false;
-    }
-
-    if (!isAllowedDomain(userInfo.email)) {
-      await clearAuthState();
-      return false;
-    }
-
-    try {
-      const token = await chrome.identity.getAuthToken({ interactive: false });
-      if (!token || !token.token) {
-        await clearAuthState();
-        return false;
-      }
-    } catch {
-      await clearAuthState();
-      return false;
-    }
-
-    isAuthenticated = true;
-    currentUser = userInfo;
-    return true;
-  } catch {
-    isAuthenticated = false;
-    currentUser = null;
-    return false;
-  }
-}
-
-async function performLogin() {
-  try {
-    const authResult = await chrome.identity.getAuthToken({ interactive: true });
-    if (!authResult || !authResult.token) {
-      return { success: false, error: '인증 토큰을 가져올 수 없습니다.' };
-    }
-    const token = authResult.token;
-
-    const response = await fetch(AUTH_CONFIG.userinfoEndpoint, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    if (!response.ok) {
-      await revokeToken(token);
-      return { success: false, error: 'Google에서 사용자 정보를 가져올 수 없습니다.' };
-    }
-
-    const userInfo = await response.json();
-    const emailDomainOk = isAllowedDomain(userInfo.email);
-    const hdOk = userInfo.hd && AUTH_CONFIG.allowedDomains.includes(userInfo.hd.toLowerCase());
-
-    if (!emailDomainOk || !hdOk) {
-      await revokeToken(token);
-      return {
-        success: false,
-        error: `@${AUTH_CONFIG.allowedDomains.join(', @')} 계정만 사용할 수 있습니다. 현재 계정(${userInfo.email})은 권한이 없습니다.`,
-      };
-    }
-
-    const userData = {
-      email: userInfo.email,
-      name: userInfo.name,
-      picture: userInfo.picture,
-      hd: userInfo.hd,
-    };
-
-    await chrome.storage.local.set({
-      [AUTH_CONFIG.storageKeys.authState]: 'authenticated',
-      [AUTH_CONFIG.storageKeys.userInfo]: userData,
-      [AUTH_CONFIG.storageKeys.tokenTimestamp]: Date.now(),
-    });
-
-    isAuthenticated = true;
-    currentUser = userData;
-    return { success: true, user: userData };
-  } catch (error) {
-    return { success: false, error: error.message || '인증에 실패했습니다.' };
-  }
-}
-
-async function performLogout() {
-  try {
-    try {
-      const authResult = await chrome.identity.getAuthToken({ interactive: false });
-      if (authResult && authResult.token) {
-        await revokeToken(authResult.token);
-      }
-    } catch {
-      // Token may already be expired
-    }
-    await clearAuthState();
-    return { success: true };
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
-}
-
-async function revokeToken(token) {
-  try {
-    await chrome.identity.removeCachedAuthToken({ token });
-    await fetch(`https://accounts.google.com/o/oauth2/revoke?token=${token}`);
-  } catch {
-    // Best effort
-  }
-}
-
-async function clearAuthState() {
-  isAuthenticated = false;
-  currentUser = null;
-  await chrome.storage.local.remove([
-    AUTH_CONFIG.storageKeys.authState,
-    AUTH_CONFIG.storageKeys.userInfo,
-    AUTH_CONFIG.storageKeys.tokenTimestamp,
-  ]);
-}
-
-function getAuthStatus() {
-  return { isAuthenticated, user: currentUser };
-}
 
 // ============================================================
 // --- Side Panel ---
@@ -440,22 +270,6 @@ function extractResponseText(data) {
 // ============================================================
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Auth messages (from popup)
-  if (message.type === 'auth_status') {
-    sendResponse(getAuthStatus());
-    return false;
-  }
-
-  if (message.type === 'auth_login') {
-    performLogin().then((result) => { sendResponse(result); });
-    return true;
-  }
-
-  if (message.type === 'auth_logout') {
-    performLogout().then((result) => { sendResponse(result); });
-    return true;
-  }
-
   // Page context request (from side panel)
   if (message.type === 'get_page_context') {
     getActiveAdminTab().then((tab) => {
@@ -501,11 +315,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // Chat request (from side panel)
   if (message.type === 'chat') {
-    if (!isAuthenticated) {
-      sendResponse({ error: '로그인이 필요합니다.' });
-      return false;
-    }
-
     handleChatRequest(message.payload)
       .then((result) => { sendResponse(result); })
       .catch((error) => { sendResponse({ error: error.message }); });
@@ -519,8 +328,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // --- Init ---
 // ============================================================
 
-async function initialize() {
-  await restoreAuthState();
-}
-
-initialize();
+// No-op init (auth removed)

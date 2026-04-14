@@ -81,7 +81,7 @@ let streamingText = '';
 // --- SSE (Server-Sent Events) ---
 // ============================================================
 
-let SERVER_URL = 'http://localhost:4098';
+let SERVER_URL = 'https://expenses-cascade-surplus.ngrok-free.dev';
 let eventSource = null;
 
 // Load server URL from storage
@@ -584,6 +584,49 @@ elements.sendBtn.addEventListener('click', () => {
   }
 });
 
+// ============================================================
+// --- Settings Modal ---
+// ============================================================
+
+const settingsOverlay = document.getElementById('settingsOverlay');
+const settingsBtn = document.getElementById('settingsBtn');
+const settingsCloseBtn = document.getElementById('settingsCloseBtn');
+
+function openSettings() {
+  settingsOverlay.classList.add('open');
+  loadServerUrl();
+}
+
+function closeSettings() {
+  settingsOverlay.classList.remove('open');
+}
+
+settingsBtn.addEventListener('click', openSettings);
+settingsCloseBtn.addEventListener('click', closeSettings);
+settingsOverlay.addEventListener('click', (e) => {
+  if (e.target === settingsOverlay) closeSettings();
+});
+
+// --- Server URL in settings ---
+function loadServerUrl() {
+  chrome.storage.sync.get('serverUrl', (data) => {
+    document.getElementById('settingsServerUrl').value = data.serverUrl || '';
+  });
+}
+
+document.getElementById('settingsSaveServerBtn').addEventListener('click', () => {
+  const url = document.getElementById('settingsServerUrl').value.trim().replace(/\/+$/, '');
+  if (!url) return;
+  chrome.storage.sync.set({ serverUrl: url }, () => {
+    const msg = document.getElementById('settingsSaveMsg');
+    msg.textContent = '저장됨!';
+    msg.style.display = 'block';
+    setTimeout(() => { msg.style.display = 'none'; }, 3000);
+  });
+});
+
+// ============================================================
+
 elements.clearBtn.addEventListener('click', () => {
   conversationHistory = [];
   elements.messages.innerHTML = '';
@@ -597,8 +640,8 @@ elements.clearBtn.addEventListener('click', () => {
     <p>AI에게 현재 보고 있는 CMS 화면에 대해<br>궁금한 점을 물어보세요.</p>
     <div class="welcome-hints">
       <button class="hint-chip" data-hint="이 화면에서 뭘 할 수 있어?">이 화면에서 뭘 할 수 있어?</button>
-      <button class="hint-chip" data-hint="이 화면의 각 항목이 무슨 뜻이야?">이 화면의 각 항목이 무슨 뜻이야?</button>
-      <button class="hint-chip" data-hint="관련된 다른 메뉴가 있어?">관련된 다른 메뉴가 있어?</button>
+      <button class="hint-chip" data-hint="멤버그룹의 크레딧 사용내역 보려면?">멤버그룹의 크레딧 사용내역 보려면?</button>
+      <button class="hint-chip" data-hint="판매할 수 있는 호실 정보를 보려면?">판매할 수 있는 호실 정보를 보려면?</button>
     </div>
   `;
   elements.messages.appendChild(welcome);
