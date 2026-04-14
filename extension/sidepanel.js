@@ -15,6 +15,8 @@ let conversationHistory = [];
 let isLoading = false;
 let currentPageContext = null;
 let lastThinkingText = '';
+let prevThinkingLen = 0;
+let currentSentence = '';
 
 // ============================================================
 // --- SSE (Server-Sent Events) ---
@@ -36,7 +38,7 @@ function connectSSE() {
           const part = data.properties?.part;
           if (part?.type === 'thinking') {
             lastThinkingText = part.text || '';
-            showThinkingInLoadingMessage(lastThinkingText);
+            updateThinkingSentence(lastThinkingText);
           }
         }
       } catch {
@@ -51,6 +53,23 @@ function connectSSE() {
   } catch {
     setTimeout(connectSSE, 5000);
   }
+}
+
+function updateThinkingSentence(fullText) {
+  // 새로 추가된 부분만 추출
+  const newPart = fullText.slice(prevThinkingLen);
+  prevThinkingLen = fullText.length;
+
+  for (const ch of newPart) {
+    if (ch === '\n') {
+      // 줄바꿈 → 현재 문장 완료, 리셋
+      currentSentence = '';
+    } else {
+      currentSentence += ch;
+    }
+  }
+
+  showThinkingInLoadingMessage(currentSentence.trim());
 }
 
 function showThinkingInLoadingMessage(text) {
@@ -257,6 +276,8 @@ async function sendMessage() {
   autoResize();
 
   lastThinkingText = '';
+  prevThinkingLen = 0;
+  currentSentence = '';
 
   addMessage('user', text);
   conversationHistory.push({ role: 'user', content: text });

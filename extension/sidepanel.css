@@ -416,10 +416,11 @@ body {
   color: var(--text-secondary);
   line-height: 1.5;
   margin-top: 6px;
-  max-height: 120px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
+  min-height: 1.5em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity 0.15s ease;
 }
 
 /* ========== Thinking Block (응답 내 접기/펼치기) ========== */
