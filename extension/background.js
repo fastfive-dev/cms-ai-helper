@@ -17,19 +17,6 @@ const API_CONFIG = {
   sessions: new Map(), // tabId -> sessionId
 };
 
-// Load server URL from storage
-chrome.storage.sync.get('serverUrl', (data) => {
-  if (data.serverUrl) {
-    API_CONFIG.baseUrl = data.serverUrl;
-  }
-});
-
-chrome.storage.onChanged.addListener((changes) => {
-  if (changes.serverUrl?.newValue) {
-    API_CONFIG.baseUrl = changes.serverUrl.newValue;
-  }
-});
-
 const ADMIN_URL_PATTERNS = [
   'admin.fastfive.co.kr',
   'admin.dev.fastfive.co.kr',

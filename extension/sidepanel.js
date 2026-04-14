@@ -81,23 +81,8 @@ let streamingText = '';
 // --- SSE (Server-Sent Events) ---
 // ============================================================
 
-let SERVER_URL = 'http://pd-mac-macmini.tailcd5e82.ts.net:4098';
+const SERVER_URL = 'http://pd-mac-macmini.tailcd5e82.ts.net:4098';
 let eventSource = null;
-
-// Load server URL from storage
-chrome.storage.sync.get('serverUrl', (data) => {
-  if (data.serverUrl) {
-    SERVER_URL = data.serverUrl;
-    connectSSE();
-  }
-});
-
-chrome.storage.onChanged.addListener((changes) => {
-  if (changes.serverUrl?.newValue) {
-    SERVER_URL = changes.serverUrl.newValue;
-    connectSSE();
-  }
-});
 
 function connectSSE() {
   if (eventSource) {
@@ -249,14 +234,23 @@ function setInputEnabled(enabled) {
   document.querySelectorAll('.hint-chip').forEach((chip) => {
     chip.disabled = !enabled;
   });
+
+  // 헤더 버튼들
+  elements.clearBtn.disabled = !enabled;
+  elements.guideResetBtn.disabled = !enabled;
+
   if (enabled) {
     inputArea.classList.remove('disabled');
     elements.userInput.disabled = false;
     elements.userInput.placeholder = '질문을 입력하세요...';
+    elements.clearBtn.style.opacity = '';
+    elements.guideResetBtn.style.opacity = '';
   } else {
     inputArea.classList.add('disabled');
     elements.userInput.disabled = true;
     elements.userInput.placeholder = 'CMS 페이지에서 사용할 수 있습니다';
+    elements.clearBtn.style.opacity = '0.4';
+    elements.guideResetBtn.style.opacity = '0.4';
   }
   updateSendButton();
 }
@@ -601,49 +595,6 @@ elements.sendBtn.addEventListener('click', () => {
   }
 });
 
-// ============================================================
-// --- Settings Modal ---
-// ============================================================
-
-const settingsOverlay = document.getElementById('settingsOverlay');
-const settingsBtn = document.getElementById('settingsBtn');
-const settingsCloseBtn = document.getElementById('settingsCloseBtn');
-
-function openSettings() {
-  settingsOverlay.classList.add('open');
-  loadServerUrl();
-}
-
-function closeSettings() {
-  settingsOverlay.classList.remove('open');
-}
-
-settingsBtn.addEventListener('click', openSettings);
-settingsCloseBtn.addEventListener('click', closeSettings);
-settingsOverlay.addEventListener('click', (e) => {
-  if (e.target === settingsOverlay) closeSettings();
-});
-
-// --- Server URL in settings ---
-function loadServerUrl() {
-  chrome.storage.sync.get('serverUrl', (data) => {
-    document.getElementById('settingsServerUrl').value = data.serverUrl || '';
-  });
-}
-
-document.getElementById('settingsSaveServerBtn').addEventListener('click', () => {
-  const url = document.getElementById('settingsServerUrl').value.trim().replace(/\/+$/, '');
-  if (!url) return;
-  chrome.storage.sync.set({ serverUrl: url }, () => {
-    const msg = document.getElementById('settingsSaveMsg');
-    msg.textContent = '저장됨!';
-    msg.style.display = 'block';
-    setTimeout(() => { msg.style.display = 'none'; }, 3000);
-  });
-});
-
-// ============================================================
-
 elements.clearBtn.addEventListener('click', () => {
   conversationHistory = [];
   elements.messages.innerHTML = '';
@@ -658,7 +609,7 @@ elements.clearBtn.addEventListener('click', () => {
     <div class="welcome-hints">
       <button class="hint-chip" data-hint="이 화면에서 뭘 할 수 있어?">이 화면에서 뭘 할 수 있어?</button>
       <button class="hint-chip" data-hint="멤버그룹의 크레딧 사용내역 보려면?">멤버그룹의 크레딧 사용내역 보려면?</button>
-      <button class="hint-chip" data-hint="판매할 수 있는 호실 정보를 보려면?">판매할 수 있는 호실 정보를 보려면?</button>
+      <button class="hint-chip" data-hint="크레딧 환불 규정이 궁금해">크레딧 환불 규정이 궁금해</button>
     </div>
   `;
   elements.messages.appendChild(welcome);

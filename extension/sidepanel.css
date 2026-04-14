@@ -33,9 +33,9 @@
   --surface-card: #1f1e1b;
   --user-bubble: #393937;
   --text-strong: #eeeeee;
-  --text-secondary: #9a9893;
-  --text-neutral: #6b6a68;
-  --text-disabled: #4a4845;
+  --text-secondary: #b5b0ab;
+  --text-neutral: #8a8884;
+  --text-disabled: #5a5855;
   --border-standard: rgba(255, 255, 255, 0.08);
   --border-hover: rgba(255, 255, 255, 0.14);
   --success: #4CAF7D;
@@ -51,9 +51,9 @@
     --surface-card: #1f1e1b;
     --user-bubble: #393937;
     --text-strong: #eeeeee;
-    --text-secondary: #9a9893;
-    --text-neutral: #6b6a68;
-    --text-disabled: #4a4845;
+    --text-secondary: #b5b0ab;
+    --text-neutral: #8a8884;
+    --text-disabled: #5a5855;
     --border-standard: rgba(255, 255, 255, 0.08);
     --border-hover: rgba(255, 255, 255, 0.14);
     --success: #4CAF7D;
@@ -161,10 +161,16 @@ body {
   transition: all 0.2s ease;
 }
 
-.btn-new-chat:hover {
+.btn-new-chat:hover:not(:disabled) {
   background: var(--surface-ground);
   border-color: var(--text-neutral);
   color: var(--text-strong);
+}
+
+.btn-new-chat:disabled,
+.theme-toggle:disabled {
+  cursor: not-allowed;
+  pointer-events: auto;
 }
 
 .btn-new-chat svg {

@@ -5,39 +5,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FASTFIVE CMS Helper</title>
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-
+    * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      width: 320px;
+      width: 280px;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: #2D2B2A;
       color: #E8E5E0;
       padding: 20px;
     }
-
     .header {
       display: flex;
       align-items: center;
       gap: 12px;
-      margin-bottom: 20px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid #4A4543;
+      margin-bottom: 16px;
     }
-
-    .header img {
-      width: 32px;
-      height: 32px;
-    }
-
-    .header h1 {
-      font-size: 14px;
-      font-weight: 600;
-      color: #ffffff;
-    }
+    .header img { width: 32px; height: 32px; }
+    .header h1 { font-size: 14px; font-weight: 600; color: #ffffff; }
+    p { font-size: 12px; color: #9B9590; line-height: 1.5; }
   </style>
 </head>
 <body>
@@ -45,24 +29,6 @@
     <img src="icons/icon48.png" alt="Logo">
     <h1>FASTFIVE CMS Helper</h1>
   </div>
-
-  <p style="font-size: 12px; color: #9B9590; margin-bottom: 16px; line-height: 1.5;">
-    CMS 사이트에서 사이드 패널을 열어<br>도우미를 사용하세요.
-  </p>
-
-  <div>
-    <label style="font-size: 11px; color: #9B9590; display: block; margin-bottom: 6px;">Server URL</label>
-    <div style="display: flex; gap: 6px;">
-      <input type="text" id="serverUrlInput" placeholder="http://pd-mac-macmini.tailcd5e82.ts.net:4098"
-        style="flex:1; padding: 8px 10px; background: #3A3735; border: 1px solid #4A4543; border-radius: 6px; color: #E8E5E0; font-size: 12px; outline: none;">
-      <button id="saveServerBtn"
-        style="padding: 8px 12px; background: #C15F3C; color: #fff; border: none; border-radius: 6px; font-size: 12px; cursor: pointer;">
-        Save
-      </button>
-    </div>
-    <div id="serverSaveMsg" style="display:none; font-size: 11px; color: #6BBF8A; margin-top: 6px;"></div>
-  </div>
-
-  <script src="popup.js"></script>
+  <p>CMS 사이트에서 사이드 패널을 열어<br>도우미를 사용하세요.</p>
 </body>
 </html>
