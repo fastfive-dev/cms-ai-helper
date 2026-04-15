@@ -12,18 +12,16 @@ var CMS_GUIDE_DATA = {
       },
       {
         title: 'CMS 주요 메뉴',
-        content: '10개 카테고리로 구성되어 있습니다.',
+        content: '8개 카테고리로 구성되어 있습니다.',
         categories: [
-          { name: '계약', description: '멤버십 / 재계약 / 부가서비스 관리', color: '#C15F3C' },
-          { name: '사용자', description: '멤버 그룹 및 멤버 관리', color: '#D4836A' },
-          { name: '회계', description: '청구 / 납부 / 증빙 / 보증금', color: '#8B6B4E' },
+          { name: '멤버', description: '멤버 그룹 및 멤버 관리', color: '#D4836A' },
           { name: '공간', description: '지점 / 라운지 예약 / 공간 계약', color: '#6B8B6E' },
           { name: '예약', description: '공간 예약 및 이용 내역', color: '#5B7B8B' },
           { name: '출입', description: '출입카드 / 권한 / 방문객', color: '#7B6B8B' },
           { name: '커뮤니케이션', description: '메시지 / 공지 / 팝업 / FAQ', color: '#8B7B5B' },
           { name: '멤버서비스', description: '베네핏 / 이벤트 / 크레딧', color: '#5B8B7B' },
           { name: '커뮤니티', description: '게시글 규칙 / 신고 관리', color: '#7B8B5B' },
-          { name: '리포트', description: '계약 전망 / 매출 전망', color: '#6B6B8B' },
+          { name: '계약', description: '멤버십 / 재계약 / 부가서비스 관리', color: '#C15F3C' },
         ],
       },
       {
