@@ -81,7 +81,7 @@ let streamingText = '';
 // --- SSE (Server-Sent Events) ---
 // ============================================================
 
-const SERVER_URL = 'http://pd-mac-macmini.tailcd5e82.ts.net:4098';
+const SERVER_URL = 'http://100.116.100.122:4098';
 let eventSource = null;
 
 function connectSSE() {

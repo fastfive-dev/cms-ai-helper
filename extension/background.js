@@ -9,7 +9,7 @@ self.addEventListener("unhandledrejection", (event) => {
 // --- Configuration ---
 // ============================================================
 
-const DEFAULT_SERVER_URL = 'http://pd-mac-macmini.tailcd5e82.ts.net:4098';
+const DEFAULT_SERVER_URL = 'http://100.116.100.122:4098';
 
 const API_CONFIG = {
   baseUrl: DEFAULT_SERVER_URL,
@@ -21,6 +21,8 @@ const ADMIN_URL_PATTERNS = [
   'admin.fastfive.co.kr',
   'admin.dev.fastfive.co.kr',
   'cms-dev.slowfive.com',
+  'cms-staging.slowfive.com',
+  'cms.slowfive.com',
   'localhost',
 ];
 
@@ -147,9 +149,18 @@ async function getOrCreateSession(tabId) {
     return API_CONFIG.sessions.get(tabId);
   }
 
-  const response = await fetch(`${API_CONFIG.baseUrl}/session`, {
-    method: 'POST',
-  });
+  let response;
+  try {
+    response = await fetch(`${API_CONFIG.baseUrl}/session`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (fetchError) {
+    if (fetchError.name === 'TimeoutError') {
+      throw new Error('서버 연결 시간 초과. 서버 상태를 확인해주세요.');
+    }
+    throw new Error(`서버에 연결할 수 없습니다 (${fetchError.message})`);
+  }
 
   if (!response.ok) {
     throw new Error(`세션 생성 실패: ${response.status}`);
@@ -198,25 +209,43 @@ async function handleChatRequest(payload) {
     // 스크린샷 실패해도 계속 진행
   }
 
-  const response = await fetch(`${API_CONFIG.baseUrl}/session/${sessionId}/message`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ parts: msgParts, pageContext }),
-  });
+  let response;
+  try {
+    response = await fetch(`${API_CONFIG.baseUrl}/session/${sessionId}/message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parts: msgParts, pageContext }),
+      signal: AbortSignal.timeout(120000),
+    });
+  } catch (fetchError) {
+    if (fetchError.name === 'TimeoutError') {
+      throw new Error('서버 응답 시간 초과 (2분). 다시 시도해주세요.');
+    }
+    throw new Error(`서버에 연결할 수 없습니다 (${fetchError.message})`);
+  }
 
   if (!response.ok) {
     // 세션 만료 시 재생성
     if (response.status === 404) {
       API_CONFIG.sessions.delete(tabId);
       const newSessionId = await getOrCreateSession(tabId);
-      const retryResponse = await fetch(
-        `${API_CONFIG.baseUrl}/session/${newSessionId}/message`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ parts: [{ type: 'text', text }], pageContext }),
-        },
-      );
+      let retryResponse;
+      try {
+        retryResponse = await fetch(
+          `${API_CONFIG.baseUrl}/session/${newSessionId}/message`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ parts: [{ type: 'text', text }], pageContext }),
+            signal: AbortSignal.timeout(120000),
+          },
+        );
+      } catch (retryFetchError) {
+        if (retryFetchError.name === 'TimeoutError') {
+          throw new Error('서버 응답 시간 초과 (2분). 다시 시도해주세요.');
+        }
+        throw new Error(`서버에 연결할 수 없습니다 (${retryFetchError.message})`);
+      }
       if (!retryResponse.ok) {
         throw new Error(`서버 오류: ${retryResponse.status}`);
       }

@@ -50,7 +50,8 @@
     "http://localhost/*",
     "https://*.ngrok-free.dev/*",
     "https://*.ts.net/*",
-    "http://*.ts.net/*"
+    "http://*.ts.net/*",
+    "http://100.116.100.122/*"
   ],
   "web_accessible_resources": [
     {
