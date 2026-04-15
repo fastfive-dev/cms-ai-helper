@@ -452,8 +452,8 @@ body {
 
 .ack-dots {
   display: inline-flex;
-  gap: 2px;
-  margin-left: 2px;
+  gap: 3px;
+  margin-left: 6px;
   vertical-align: baseline;
 }
 
@@ -461,7 +461,7 @@ body {
   display: inline-block;
   width: 4px;
   height: 4px;
-  background: var(--text-secondary);
+  background: var(--primary);
   border-radius: 50%;
   animation: ackBounce 1.4s ease-in-out infinite;
 }
