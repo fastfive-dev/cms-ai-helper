@@ -124,10 +124,11 @@ function showAckMessage(text) {
   if (!content) return;
 
   content.innerHTML =
-    '<div class="ack-message">' +
-      '<p class="ack-text">' + text + '</p>' +
-      '<div class="ack-progress-bar"><div class="ack-progress-fill"></div></div>' +
-    '</div>';
+    '<p class="ack-text">' + text +
+      '<span class="ack-dots">' +
+        '<span></span><span></span><span></span>' +
+      '</span>' +
+    '</p>';
   scrollToBottom();
 }
 
