@@ -530,9 +530,7 @@ function renderMarkdown(text) {
   html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
 
   // Headers
-  html = html.replace(/^### (.+)$/gm, '<strong>$1</strong>');
-  html = html.replace(/^## (.+)$/gm, '<strong>$1</strong>');
-  html = html.replace(/^# (.+)$/gm, '<strong>$1</strong>');
+  html = html.replace(/^#{1,6} (.+)$/gm, '<strong>$1</strong>');
 
   // Line breaks
   html = html.replace(/\n/g, '<br>');
