@@ -16,6 +16,11 @@ services:
       - PORT=4098
       - CLAUDE_SERVE_URL=http://host.docker.internal:4099
       - DB_PATH=/app/data/admin-helper.db
+      # 모델 설정 (롤백: claude-opus-4-6)
+      - MODEL=${MODEL:-claude-sonnet-4-6}
+      # Thinking 예산 (롤백: 5000 / 비활성화: 0)
+      - THINKING_BUDGET=${THINKING_BUDGET:-0}
+      # Confluence 정책서
       - CONFLUENCE_EMAIL=${CONFLUENCE_EMAIL}
       - CONFLUENCE_API_TOKEN=${CONFLUENCE_API_TOKEN}
       - CONFLUENCE_SITE=${CONFLUENCE_SITE:-fastfive.atlassian.net}

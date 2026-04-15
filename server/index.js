@@ -22,7 +22,8 @@ process.on("unhandledRejection", (reason) => {
 // ---------------------------------------------------------------------------
 const __dirname = path.dirname(new URL(import.meta.url).pathname);
 const PORT = parseInt(process.env.PORT, 10) || 4098;
-const DEFAULT_MODEL = process.env.MODEL || "claude-opus-4-6";
+const DEFAULT_MODEL = process.env.MODEL || "claude-sonnet-4-6";
+const THINKING_BUDGET = parseInt(process.env.THINKING_BUDGET, 10) || 0; // 0 = 비활성화
 const TIMEOUT_MS = parseInt(process.env.TIMEOUT, 10) || 300000; // 5분
 const CLAUDE_SERVE_URL = process.env.CLAUDE_SERVE_URL || "http://localhost:4097";
 const CLAUDE_SERVE_AUTH = process.env.CLAUDE_SERVE_AUTH_TOKEN || "";
@@ -93,6 +94,26 @@ const sseClients = new Set();
 
 function makeId(prefix) {
     return prefix + "_" + crypto.randomUUID().replace(/-/g, "").slice(0, 20);
+}
+
+const ACK_KEYWORDS = [
+    [/예약/, "예약"],
+    [/출입|카드/, "출입"],
+    [/공간|지점|호실/, "공간"],
+    [/계약/, "계약"],
+    [/사용자|멤버|그룹/, "사용자"],
+    [/커뮤니케이션|메시지|공지/, "커뮤니케이션"],
+    [/크레딧|결제|회계/, "크레딧/결제"],
+    [/베네핏|이벤트/, "멤버서비스"],
+];
+
+function generateAck(promptText) {
+    for (const [pattern, topic] of ACK_KEYWORDS) {
+        if (pattern.test(promptText)) {
+            return `${topic} 관련 내용을 확인하고 있어요. 잠시만 기다려주세요!`;
+        }
+    }
+    return "내용을 확인하고 있어요. 잠시만 기다려주세요!";
 }
 
 function broadcast(event) {
@@ -166,7 +187,9 @@ async function sendToClaudeServe(claudeServeSessionId, promptText, systemPrompt,
             maxTurns: 1,
             systemPrompt,
             disallowedTools: ["Bash", "Write", "Edit", "NotebookEdit", "TodoWrite"],
-            thinking: {type: "enabled", budgetTokens: 5000},
+            ...(THINKING_BUDGET > 0
+                ? { thinking: { type: "enabled", budgetTokens: THINKING_BUDGET } }
+                : {}),
             parts: [{type: "text", text: promptText}],
         }),
     });
@@ -335,6 +358,22 @@ app.post("/session/:sessionID/message", async (req, res) => {
     const policyContent = await getPolicyContent();
     const systemPrompt = buildSystemPrompt(policyContent);
 
+    // --- 1초 후 acknowledgment SSE 전송 (체감 응답속도 개선) ---
+    const ackTimer = setTimeout(() => {
+        broadcast({
+            type: "message.part.updated",
+            properties: {
+                part: {
+                    id: makeId("ack"),
+                    sessionID: session.id,
+                    messageID: makeId("msg"),
+                    type: "ack",
+                    text: generateAck(promptText),
+                },
+            },
+        });
+    }, 1000);
+
     // --- claude-serve로 요청 ---
     const abortCtrl = new AbortController();
     session.abortCtrl = abortCtrl;
@@ -383,6 +422,7 @@ app.post("/session/:sessionID/message", async (req, res) => {
         }
     } finally {
         clearTimeout(timer);
+        clearTimeout(ackTimer);
         delete session.abortCtrl;
     }
 

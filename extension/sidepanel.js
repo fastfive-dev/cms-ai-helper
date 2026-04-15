@@ -110,7 +110,9 @@ function connectSSE() {
         const data = JSON.parse(e.data);
         if (data.type === 'message.part.updated') {
           const part = data.properties?.part;
-          if (part?.type === 'text') {
+          if (part?.type === 'ack') {
+            showAckMessage(part.text || '');
+          } else if (part?.type === 'text') {
             streamingText = part.text || '';
             showStreamingText(streamingText);
           }
@@ -127,6 +129,21 @@ function connectSSE() {
   } catch {
     setTimeout(connectSSE, 5000);
   }
+}
+
+function showAckMessage(text) {
+  const loadingMsg = document.getElementById('loadingMessage');
+  if (!loadingMsg) return;
+
+  const content = loadingMsg.querySelector('.message-content');
+  if (!content) return;
+
+  content.innerHTML =
+    '<div class="ack-message">' +
+      '<p class="ack-text">' + text + '</p>' +
+      '<div class="ack-progress-bar"><div class="ack-progress-fill"></div></div>' +
+    '</div>';
+  scrollToBottom();
 }
 
 let pendingStreamRender = false;

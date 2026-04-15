@@ -437,6 +437,41 @@ body {
   40% { transform: scale(1); opacity: 1; }
 }
 
+/* ========== Ack Message (즉시 응답) ========== */
+.ack-message {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ack-text {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ack-progress-bar {
+  width: 100%;
+  height: 3px;
+  background: var(--border-standard);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.ack-progress-fill {
+  width: 40%;
+  height: 100%;
+  background: var(--primary);
+  border-radius: 3px;
+  animation: ackSlide 1.5s ease-in-out infinite;
+}
+
+@keyframes ackSlide {
+  0% { transform: translateX(-100%); }
+  50% { transform: translateX(200%); }
+  100% { transform: translateX(-100%); }
+}
+
 /* ========== Streaming Cursor ========== */
 .streaming-cursor {
   display: inline-block;

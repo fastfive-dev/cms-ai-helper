@@ -123,8 +123,16 @@ function storageToText(html) {
         .replace(/&quot;/g, '"')
         .replace(/&#39;/g, "'");
 
-    // 공백 정리
+    // 공백·노이즈 압축
     text = text.replace(/[ \t]+/g, " ");
+    text = text.replace(/\n /g, "\n");
+    text = text.replace(/\n{3,}/g, "\n\n");
+    // 목차 링크, 이모지 장식 제거
+    text = text.replace(/👉🏻목차\s*/g, "");
+    text = text.replace(/[\u{1F600}-\u{1F9FF}]/gu, "");
+    // 빈 리스트 아이템 제거
+    text = text.replace(/^- \s*$/gm, "");
+    // 연속 빈 줄 재정리
     text = text.replace(/\n{3,}/g, "\n\n");
 
     return text.trim();
