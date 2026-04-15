@@ -20,15 +20,13 @@
   "content_scripts": [
     {
       "matches": [
-        "https://admin.fastfive.co.kr/*",
-        "https://admin.dev.fastfive.co.kr/*",
         "https://cms-dev.slowfive.com/*",
         "https://cms-staging.slowfive.com/*",
         "https://cms.slowfive.com/*",
         "http://localhost/*"
       ],
-      "js": ["guide-data.js", "content.js", "guide.js"],
-      "css": ["guide.css"],
+      "js": ["tour-data.js", "content.js", "tour.js"],
+      "css": ["tour.css"],
       "run_at": "document_idle"
     }
   ],
@@ -42,8 +40,6 @@
     "default_title": "FASTFIVE CMS Helper"
   },
   "host_permissions": [
-    "https://admin.fastfive.co.kr/*",
-    "https://admin.dev.fastfive.co.kr/*",
     "https://cms-dev.slowfive.com/*",
     "https://cms-staging.slowfive.com/*",
     "https://cms.slowfive.com/*",

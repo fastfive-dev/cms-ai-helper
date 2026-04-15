@@ -63,7 +63,7 @@ API 엔드포인트:
 
 ### 3. 사용
 
-1. CMS 사이트 접속 (admin.fastfive.co.kr / admin.dev.fastfive.co.kr / localhost)
+1. CMS 사이트 접속 (cms.slowfive.com / cms-dev.slowfive.com / localhost)
 2. 익스텐션 아이콘 클릭 → 사이드 패널 열림
 3. 질문 입력 → 현재 화면 컨텍스트 + 스크린샷과 함께 AI에 전송
 
@@ -94,9 +94,12 @@ node scripts/generate-knowledge.js --admin-path /path/to/fastfive-web/apps/admin
 ### 대상 URL
 
 `manifest.json`의 `content_scripts.matches`와 `host_permissions`에서 관리:
-- `https://admin.fastfive.co.kr/*`
-- `https://admin.dev.fastfive.co.kr/*`
+- `https://cms.slowfive.com/*`
+- `https://cms-dev.slowfive.com/*`
+- `https://cms-staging.slowfive.com/*`
 - `http://localhost/*`
+
+투어 가이드(`tour.js`)는 추가로 도메인을 자체 필터링하여 `cms-dev.slowfive.com`에서만 활성화됩니다.
 
 ## License
 

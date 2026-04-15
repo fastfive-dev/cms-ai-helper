@@ -33,6 +33,8 @@ function initTheme() {
   const saved = localStorage.getItem('theme');
   if (saved) {
     applyTheme(saved);
+    // Mirror to chrome.storage so content scripts (tour) can read it
+    chrome.storage.local.set({ cms_theme: saved });
   }
 }
 
@@ -50,26 +52,26 @@ function toggleTheme() {
 
   applyTheme(next);
   localStorage.setItem('theme', next);
+  // Sync to content scripts (tour)
+  chrome.storage.local.set({ cms_theme: next });
 }
 
 initTheme();
 elements.themeToggle.addEventListener('click', toggleTheme);
 
 // ============================================================
-// --- Guide Reset ---
+// --- Tour Toggle ---
 // ============================================================
 
 elements.guideResetBtn.addEventListener('click', () => {
-  chrome.storage.local.remove(
-    ['guide_onboarding_seen', 'guide_pages_seen', 'guide_disabled'],
-    () => {
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs[0]?.id) {
-          chrome.tabs.reload(tabs[0].id);
-        }
-      });
-    }
-  );
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tabId = tabs[0]?.id;
+    if (!tabId) return;
+    chrome.tabs.sendMessage(tabId, { type: 'toggle_tour' }, () => {
+      // content script가 주입되지 않은 페이지에서 lastError 무시
+      void chrome.runtime.lastError;
+    });
+  });
 });
 
 let conversationHistory = [];
