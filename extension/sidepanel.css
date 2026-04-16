@@ -808,3 +808,263 @@ textarea::placeholder {
 .icon-btn[title] {
   position: relative;
 }
+
+/* ========== Assistance Toggle ========== */
+.assist-toggle {
+  color: var(--text-disabled);
+}
+
+.assist-toggle.active {
+  color: var(--primary);
+  background: var(--primary-subtle);
+}
+
+.assist-toggle.active:hover {
+  background: var(--primary-subtle);
+  color: var(--primary);
+}
+
+/* ========== Assistance Indicator Chip ========== */
+.assist-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  margin: 0 0 8px;
+  background: var(--primary-subtle);
+  color: var(--primary);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  align-self: flex-start;
+  width: fit-content;
+}
+
+.assist-indicator[hidden] {
+  display: none;
+}
+
+.assist-indicator-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* ========== Action Plan Card ========== */
+.action-card {
+  align-self: stretch;
+  max-width: 100%;
+  background: var(--surface-card);
+  border: 0.5px solid var(--border-standard);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  animation: fadeIn 0.3s ease;
+  box-shadow: 0 0.25rem 1.25rem rgba(0, 0, 0, 0.04);
+}
+
+.action-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 0.5px solid var(--border-standard);
+}
+
+.action-card-header-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+}
+
+.action-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.action-card-section {
+  padding: 12px 16px;
+}
+
+.action-card-section + .action-card-section {
+  padding-top: 0;
+}
+
+.action-card-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-neutral);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 6px;
+}
+
+.action-card-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.action-card-target-icon {
+  font-size: 13px;
+}
+
+.action-card-steps {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.action-card-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  padding: 6px 0;
+}
+
+.action-card-step-status {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-disabled);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+  font-size: 10px;
+  color: #fff;
+  position: relative;
+}
+
+.action-card-step.running .action-card-step-status {
+  background: var(--primary);
+  animation: assistStepPulse 1.2s ease-in-out infinite;
+}
+
+.action-card-step.done .action-card-step-status {
+  background: var(--success);
+}
+
+.action-card-step.done .action-card-step-status::before {
+  content: '✓';
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.action-card-step.failed .action-card-step-status {
+  background: var(--danger);
+}
+
+.action-card-step.failed .action-card-step-status::before {
+  content: '✗';
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.action-card-step.running .action-card-step-text,
+.action-card-step.done .action-card-step-text {
+  color: var(--text-strong);
+}
+
+.action-card-step.failed .action-card-step-text {
+  color: var(--danger);
+}
+
+.action-card-step-text {
+  flex: 1;
+  word-break: break-word;
+}
+
+.action-card-step-error {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--danger);
+  background: rgba(212, 72, 59, 0.08);
+  padding: 4px 8px;
+  border-radius: 6px;
+  word-break: break-word;
+}
+
+@keyframes assistStepPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(0.85); }
+}
+
+.action-card-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 16px;
+  border-top: 0.5px solid var(--border-standard);
+  background: var(--surface-ground);
+}
+
+.action-card-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  border: 0.5px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.action-card-btn-primary {
+  background: var(--primary);
+  color: #fff;
+}
+
+.action-card-btn-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.action-card-btn-secondary {
+  background: var(--surface-card);
+  color: var(--text-secondary);
+  border-color: var(--border-standard);
+}
+
+.action-card-btn-secondary:hover:not(:disabled) {
+  border-color: var(--text-neutral);
+  color: var(--text-strong);
+}
+
+.action-card-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.action-card-btn[hidden] {
+  display: none;
+}
+
+.action-card-btn-shortcut {
+  font-size: 11px;
+  opacity: 0.7;
+  margin-left: 4px;
+}
+
+.action-card-footer {
+  padding: 10px 16px;
+  font-size: 11.5px;
+  color: var(--text-neutral);
+  line-height: 1.5;
+  border-top: 0.5px solid var(--border-standard);
+}

@@ -16,6 +16,11 @@
         <span class="context-path" id="contextPath">감지 중...</span>
       </div>
       <div class="header-actions">
+        <button id="assistToggleBtn" class="theme-toggle assist-toggle" title="어시스턴스 모드 켜기/끄기">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2l2.39 6.95H22l-6.2 4.5 2.4 7.05L12 16l-6.2 4.5 2.4-7.05L2 8.95h7.61z"/>
+          </svg>
+        </button>
         <button id="guideResetBtn" class="theme-toggle" title="CMS 투어 가이드 열기/닫기">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
@@ -54,6 +59,14 @@
 
     <!-- Input -->
     <div class="input-area">
+      <div class="assist-indicator" id="assistIndicator" hidden>
+        <span class="assist-indicator-icon">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2l2.39 6.95H22l-6.2 4.5 2.4 7.05L12 16l-6.2 4.5 2.4-7.05L2 8.95h7.61z"/>
+          </svg>
+        </span>
+        <span class="assist-indicator-text">어시스턴스 활성화 — 액션 플랜이 제안됩니다</span>
+      </div>
       <div class="input-wrapper">
         <textarea
           id="userInput"

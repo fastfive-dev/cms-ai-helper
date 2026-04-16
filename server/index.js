@@ -75,15 +75,71 @@ const SYSTEM_PROMPT_BASE = `당신은 FASTFIVE CMS 프로덕트 사용 가이드
 위 항목이 응답에 포함되면 사용자 경험을 해칩니다. 해당 화면 고유의 업무 로직, 상태 전환, 데이터 흐름에만 집중하세요.
 ${knowledgeContent ? "\n## 상세 사용 가이드\n" + knowledgeContent : ""}`;
 
-function buildSystemPrompt(policyContent) {
-    if (!policyContent) return SYSTEM_PROMPT_BASE;
-    return (
-        SYSTEM_PROMPT_BASE +
-        "\n\n## 서비스 정책서 (FASTFIVE 멤버서비스)\n" +
-        "아래는 Confluence에서 가져온 최신 서비스 정책서입니다. " +
-        "사용자 질문에 답변할 때 이 정책 내용을 참고하여 정확한 정보를 제공하세요.\n\n" +
-        policyContent
-    );
+const ASSIST_MODE_INSTRUCTIONS = `
+
+## 어시스턴스 모드
+사용자가 명확한 행동 의도 (이동/조회/확인/보여줘/검색 등)를 가진 질문을 하면, 일반 안내 텍스트와 함께 액션 플랜을 반환하세요.
+
+응답 끝에 다음 형식의 액션 블록을 추가하세요. 사용자에게는 보이지 않습니다.
+
+<action-plan>
+{
+  "title": "한 줄 요약",
+  "steps": [
+    { "type": "navigate", "path": "/members" },
+    { "type": "click", "text": "출입기록", "scope": "tabs" }
+  ]
+}
+</action-plan>
+
+규칙:
+- 단순 정보 조회/일반 질문/정책 문의에는 actionPlan을 생략합니다.
+- 사용자가 "이동", "보여줘", "확인하고 싶어", "검색해줘" 같은 행동 의도가 명확할 때만 포함합니다.
+- 'path'는 knowledge.md의 메뉴 라우트를 활용하세요.
+- 'click'은 selector보다 'text' + 'scope' (tabs / menu / buttons / actions 중 하나) 를 우선 사용하세요. text가 충분히 고유하면 scope 생략 가능합니다.
+- steps는 최소한으로 유지하세요 (보통 1~3단계).
+- actionPlan 블록의 JSON은 반드시 유효해야 합니다. 주석/trailing comma 금지.
+- 액션 플랜을 만들었다면 텍스트 응답 끝에 "자동으로 이동할까요?" 같은 한 줄을 덧붙여 안내해주세요.`;
+
+function buildSystemPrompt(policyContent, assistMode) {
+    let prompt = SYSTEM_PROMPT_BASE;
+    if (policyContent) {
+        prompt +=
+            "\n\n## 서비스 정책서 (FASTFIVE 멤버서비스)\n" +
+            "아래는 Confluence에서 가져온 최신 서비스 정책서입니다. " +
+            "사용자 질문에 답변할 때 이 정책 내용을 참고하여 정확한 정보를 제공하세요.\n\n" +
+            policyContent;
+    }
+    if (assistMode) {
+        prompt += ASSIST_MODE_INSTRUCTIONS;
+    }
+    return prompt;
+}
+
+// ---------------------------------------------------------------------------
+// Action Plan Extraction
+// ---------------------------------------------------------------------------
+function extractActionPlan(text) {
+    if (!text) return { text: "", actionPlan: null };
+
+    const match = text.match(/<action-plan>([\s\S]*?)<\/action-plan>/i);
+    if (!match) return { text, actionPlan: null };
+
+    let plan = null;
+    try {
+        plan = JSON.parse(match[1].trim());
+    } catch (err) {
+        console.warn(`[admin-helper] actionPlan JSON parse failed: ${err.message}`);
+        return { text, actionPlan: null };
+    }
+
+    // 최소 검증
+    if (!plan || !Array.isArray(plan.steps) || plan.steps.length === 0) {
+        return { text, actionPlan: null };
+    }
+
+    const cleanText = text.replace(/<action-plan>[\s\S]*?<\/action-plan>/i, "").trim();
+    return { text: cleanText, actionPlan: plan };
 }
 
 // ---------------------------------------------------------------------------
@@ -339,6 +395,7 @@ app.post("/session/:sessionID/message", async (req, res) => {
     const body = req.body || {};
     const parts = body.parts || [];
     const pageContext = body.pageContext || null;
+    const assistMode = body.assistMode === true;
 
     const promptText = parts
         .filter((p) => p.type === "text")
@@ -356,7 +413,7 @@ app.post("/session/:sessionID/message", async (req, res) => {
 
     // 정책서 로드 (캐시된 경우 즉시 반환)
     const policyContent = await getPolicyContent();
-    const systemPrompt = buildSystemPrompt(policyContent);
+    const systemPrompt = buildSystemPrompt(policyContent, assistMode);
 
     // --- 1초 후 acknowledgment SSE 전송 (체감 응답속도 개선) ---
     const ackTimer = setTimeout(() => {
@@ -426,18 +483,24 @@ app.post("/session/:sessionID/message", async (req, res) => {
         delete session.abortCtrl;
     }
 
-    // DB에 어시스턴트 응답 저장
-    if (accumulatedText) {
-        db.saveMessage(session.id, "assistant", accumulatedText, null, false);
+    // 액션 플랜 추출 (assistMode일 때만)
+    const { text: cleanText, actionPlan } = assistMode
+        ? extractActionPlan(accumulatedText)
+        : { text: accumulatedText, actionPlan: null };
+
+    // DB에는 정리된 텍스트만 저장 (action-plan 블록 제거)
+    if (cleanText) {
+        db.saveMessage(session.id, "assistant", cleanText, null, false);
     }
 
     // HTTP 응답
     res.json({
-        text: accumulatedText,
+        text: cleanText,
+        actionPlan,
         thinking: null,
         sessionId: session.id,
-        parts: accumulatedText
-            ? [{type: "text", text: accumulatedText}]
+        parts: cleanText
+            ? [{type: "text", text: cleanText}]
             : [],
     });
 });

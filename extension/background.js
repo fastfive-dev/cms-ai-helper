@@ -176,7 +176,7 @@ async function getOrCreateSession(tabId) {
 }
 
 async function handleChatRequest(payload) {
-  const { messages, pageContext } = payload;
+  const { messages, pageContext, assistMode } = payload;
 
   // 현재 탭의 세션 ID
   const tab = await getActiveAdminTab();
@@ -207,12 +207,18 @@ async function handleChatRequest(payload) {
     // 스크린샷 실패해도 계속 진행
   }
 
+  const requestBody = {
+    parts: msgParts,
+    pageContext,
+    assistMode: assistMode === true,
+  };
+
   let response;
   try {
     response = await fetch(`${API_CONFIG.baseUrl}/session/${sessionId}/message`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ parts: msgParts, pageContext }),
+      body: JSON.stringify(requestBody),
       signal: AbortSignal.timeout(120000),
     });
   } catch (fetchError) {
@@ -234,7 +240,11 @@ async function handleChatRequest(payload) {
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ parts: [{ type: 'text', text }], pageContext }),
+            body: JSON.stringify({
+              parts: [{ type: 'text', text }],
+              pageContext,
+              assistMode: assistMode === true,
+            }),
             signal: AbortSignal.timeout(120000),
           },
         );
@@ -248,13 +258,46 @@ async function handleChatRequest(payload) {
         throw new Error(`서버 오류: ${retryResponse.status}`);
       }
       const retryData = await retryResponse.json();
-      return { content: extractResponseText(retryData), thinking: retryData.thinking || null };
+      return {
+        content: extractResponseText(retryData),
+        thinking: retryData.thinking || null,
+        actionPlan: retryData.actionPlan || null,
+      };
     }
     throw new Error(`서버 오류: ${response.status}`);
   }
 
   const data = await response.json();
-  return { content: extractResponseText(data), thinking: data.thinking || null };
+  return {
+    content: extractResponseText(data),
+    thinking: data.thinking || null,
+    actionPlan: data.actionPlan || null,
+  };
+}
+
+// ============================================================
+// --- Action Execution Routing ---
+// ============================================================
+
+async function routeExecuteAction(action) {
+  const tab = await getActiveAdminTab();
+  if (!tab?.id) {
+    throw new Error('No active CMS tab');
+  }
+
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tab.id, { type: 'execute_action', action }, (result) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      if (!result) {
+        reject(new Error('No response from content script'));
+        return;
+      }
+      resolve(result);
+    });
+  });
 }
 
 function extractResponseText(data) {
@@ -324,6 +367,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       sendResponse({ success: true });
     });
+    return true;
+  }
+
+  // Execute action (from side panel - assistance mode)
+  if (message.type === 'execute_action') {
+    routeExecuteAction(message.action)
+      .then((result) => { sendResponse(result); })
+      .catch((error) => { sendResponse({ ok: false, error: error.message }); });
     return true;
   }
 
