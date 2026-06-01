@@ -1,7 +1,7 @@
 FROM node:18-alpine
 
 RUN apk add --no-cache python3 make g++
-RUN npm install -g pnpm@8
+RUN npm install -g pnpm@10
 
 WORKDIR /app
 

@@ -4,7 +4,10 @@ import crypto from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
 import { query } from "@anthropic-ai/claude-agent-sdk";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
 // Prevent uncaught errors from crashing the process
@@ -26,7 +29,7 @@ const PORT = parseInt(process.env.CLAUDE_SERVE_PORT, 10) || 4097;
 const config = (() => {
   try {
     return JSON.parse(
-      fs.readFileSync(path.join(import.meta.dirname, "config.json"), "utf8"),
+      fs.readFileSync(path.join(__dirname, "config.json"), "utf8"),
     );
   } catch {
     return {};
